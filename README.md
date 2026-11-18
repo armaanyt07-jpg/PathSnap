@@ -46,16 +46,38 @@ src/pathsnap/features.py    A   feature table (contract §1)
 src/pathsnap/viz.py         A   Folium maps
 src/pathsnap/metrics.py     D   top-1, macro F1, miss rate, continuity (contract §3/§5)
 src/pathsnap/baseline.py    B   reference model bundle (contract §2)
+src/pathsnap/model_zoo.py   B   six model families behind predict_scores
+src/pathsnap/evaluation.py  B   trip-level split, subsampling, observation-level metrics
 src/pathsnap/pipeline.py    C/D glue + per-trip cache
 src/api/main.py             C   FastAPI (contract §4)
 src/ui/app.py               D   Streamlit
 scripts/                    owners as named in each file header
 ```
 
+## Modelling (workstream B)
+
+```bash
+# one family, identical folds for every family
+python scripts/train_models.py --family hist_gbdt --neg-frac 0.5 --calibrate
+
+# promote the winner to the bundle the API loads
+python scripts/train_models.py --family hist_gbdt --neg-frac 0.5 --calibrate --set-champion
+
+# comparison table for the slide (results/model_comparison.md)
+python scripts/compare_models.py
+
+# Bayesian tuning (needs optuna), then retrain with the best params
+python scripts/tune_optuna.py --family hist_gbdt --trials 60 --timeout 720
+python scripts/train_models.py --family hist_gbdt --params-file artifacts/best_params_hist_gbdt.json
+```
+
+Families: `logistic, extra_trees, hist_gbdt, nystroem_sgd, mlp, sgd_huber`.
+Every run is appended to `results/model_runs.csv`; the dev/holdout trip split is frozen in
+`artifacts/split.json` so all families are scored on the same trips.
+
 ## What is deliberately missing (do not demo it as done)
 
 - HMM/Viterbi decoder — `src/api/main.py` marks the hook; C owns it.
-- Models 2–5 and Bayesian optimisation — B.
 - Two-laptop deployment hardening, screenshots, report — D.
 - `candidate_miss_rate` is computed in the feature build but only surfaced by the API once
   C wires it into the response (it is already present in `results/feature_build_report.json`).
