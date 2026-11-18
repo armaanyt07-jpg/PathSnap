@@ -17,6 +17,17 @@ PathSnap/
 
 ## Laptop 1: FastAPI
 
+Windows PowerShell can use `scripts/run_api.ps1` instead of the Bash launch command below:
+
+```powershell
+$env:PATHSNAP_DATA_DIR = (Get-Location).Path
+$env:PATHSNAP_API_HOST = '0.0.0.0'
+$env:PATHSNAP_API_PORT = '8000'
+.\scripts\run_api.ps1
+```
+
+The API laptop still needs the dataset and a compatible trained model bundle.
+
 ```bash
 cd ~/projects/PathSnap
 python3 -m venv .venv
@@ -39,6 +50,13 @@ The health response should report `model_loaded: true` before making predictions
 
 ## Laptop 2: Streamlit
 
+On Windows PowerShell, use:
+
+```powershell
+$env:PATHSNAP_API_URL = 'http://<LAPTOP_1_PRIVATE_IP>:8000'
+.\scripts\run_ui.ps1
+```
+
 Find Laptop 1's private IP address (for example, with `hostname -I` on Linux), then run:
 
 ```bash
@@ -55,6 +73,8 @@ Open `http://localhost:8501` on Laptop 2. The sidebar health indicator should sh
 If the API URL cannot connect, verify both laptops are on the same network, the IP is correct, port 8000 is allowed by Laptop 1's firewall, and the API was started with host `0.0.0.0`.
 
 ## One-laptop fallback
+
+On Windows PowerShell, run `scripts/run_all.ps1`. It starts the API, waits for health, then runs Streamlit. Press Ctrl+C in that window to stop the UI and its API child process.
 
 For local development or a backup demo, start the API and UI together:
 
