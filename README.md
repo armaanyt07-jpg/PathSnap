@@ -81,6 +81,9 @@ python scripts/train_models.py --family hist_gbdt --neg-frac 0.5 --calibrate --s
 # comparison table for the slide (results/model_comparison.md)
 python scripts/compare_models.py
 
+# figures for report §3.3 (results/figures/*.png)
+python scripts/make_figures.py
+
 # Bayesian tuning (needs optuna), then retrain with the best params
 python scripts/tune_optuna.py --family hist_gbdt --trials 60 --timeout 720
 python scripts/train_models.py --family hist_gbdt --params-file artifacts/best_params_hist_gbdt.json
