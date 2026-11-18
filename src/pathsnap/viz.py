@@ -37,6 +37,8 @@ def make_map(
     center: tuple[float, float] | None = None,
     max_network_segments: int = 1500,
     zoom_start: int = 15,
+    *,
+    pred_lines=None,
 ):
     obs = np.asarray(obs_lonlat, dtype=float)
     if center is None:
@@ -75,9 +77,12 @@ def make_map(
         folium.PolyLine(_to_latlon(ref_line), color=REF_COLOR, weight=4, opacity=0.85).add_to(ref)
         ref.add_to(m)
 
-    if pred_line is not None and len(pred_line):
+    lines = pred_lines if pred_lines is not None else [pred_line]
+    lines = [line for line in lines if line is not None and len(line)]
+    if lines:
         pred = folium.FeatureGroup(name="Predicted route", show=True)
-        folium.PolyLine(_to_latlon(pred_line), color=PRED_COLOR, weight=4, opacity=0.9).add_to(pred)
+        for line in lines:
+            folium.PolyLine(_to_latlon(line), color=PRED_COLOR, weight=4, opacity=0.9).add_to(pred)
         pred.add_to(m)
 
     folium.LayerControl(collapsed=False).add_to(m)

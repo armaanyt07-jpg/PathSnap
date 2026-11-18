@@ -5,6 +5,7 @@ import joblib
 import numpy as np
 
 from hmm import Config, decode
+from hmm.model import TrainedHMM
 from pathsnap import baseline, features, labels, metrics, io
 from pathsnap.geo import LocalProjection
 
@@ -15,9 +16,10 @@ def finite_metrics(values):
 
 def predict_trip(trip, model, cfg, decoder_config=None):
     start = perf_counter()
+    trained_hmm = isinstance(model, TrainedHMM)
     frame, _ = features.build_trip_features(dict(trip, route=None),
         k=int(cfg['k_candidates']), buffer_m=float(cfg['buffer_m']),
-        max_segments=int(cfg['network_prefilter']['max_segments']))
+        max_segments=int(cfg['network_prefilter']['max_segments']), extended=trained_hmm)
     feature_end = perf_counter()
     scores = baseline.predict_scores(model, frame) if len(frame) else np.array([])
     if scores.shape != (len(frame),):
@@ -25,31 +27,16 @@ def predict_trip(trip, model, cfg, decoder_config=None):
     track, nodes, arcs = trip['track'], trip['nodes'], trip['arcs']
     projection = LocalProjection(track['lon'].median(), track['lat'].median())
     xy = projection.xy(nodes[:, 0], nodes[:, 1])
-    lengths = np.linalg.norm(xy[arcs[:, 1]] - xy[arcs[:, 0]], axis=1)
-    network = [{'arc_id': i, 'from_id': int(a[0]), 'to_id': int(a[1]), 'length_m': float(lengths[i])}
-               for i, a in enumerate(arcs) if lengths[i] > 0]
-    candidates = [[] for _ in range(len(track))]
-    for row, probability in zip(frame.itertuples(index=False), scores):
-        if lengths[row.arc_id] > 0:
-            candidates[row.obs_idx].append({'arc_id': int(row.arc_id),
-                'along_arc_m': float(row.along_m), 'probability': float(probability)})
-    observations = [{'obs_idx': i, 'timestamp': float(row.t), 'lon': float(row.lon),
-                     'lat': float(row.lat), 'candidates': candidates[i]}
-                    for i, row in enumerate(track.itertuples(index=False))]
+    observations, network, candidates = build_lattice(track, arcs, xy, frame, scores)
     model_end = perf_counter()
-    decoded = decode(observations, network, decoder_config or Config())
+    if decoder_config is None:
+        decoder_config = model.decoder_config if trained_hmm else Config()
+    decoded = decode(observations, network, decoder_config)
     decode_end = perf_counter()
     hmm_ids = np.array([o['arc_id'] if o['arc_id'] is not None else -1 for o in decoded['observations']], dtype=int)
     base_ids = np.array([o['baseline_arc_id'] if o['baseline_arc_id'] is not None else -1 for o in decoded['observations']], dtype=int)
-    def continuity(ids):
-        if len(ids) < 2:
-            return {}
-        good = (ids[:-1] >= 0) & (ids[1:] >= 0)
-        connected = np.zeros(len(ids) - 1, dtype=bool)
-        a, b = ids[:-1][good], ids[1:][good]
-        connected[good] = (a == b) | (arcs[a, 1] == arcs[b, 0])
-        return {'route_continuity': float(connected.mean())}
-    hmm_metrics, base_metrics = continuity(hmm_ids), continuity(base_ids)
+    base_metrics = finite_metrics({'route_continuity': metrics.route_continuity(base_ids, arcs)})
+    hmm_metrics = finite_metrics({'route_continuity': metrics.route_continuity(hmm_ids, arcs)})
     route = trip.get('route')
     if route is not None and len(route):
         obs_xy = projection.xy(track['lon'], track['lat'])
@@ -89,6 +76,22 @@ def predict_trip(trip, model, cfg, decoder_config=None):
         'timings': {'features_ms': (feature_end-start)*1000, 'model_ms': (model_end-feature_end)*1000,
             'decode_ms': (decode_end-model_end)*1000, 'inference_ms': (decode_end-feature_end)*1000,
             'total_ms': (perf_counter()-start)*1000}}
+
+
+def build_lattice(track, arcs, xy, frame, scores):
+    lengths = np.linalg.norm(xy[arcs[:, 1]] - xy[arcs[:, 0]], axis=1)
+    network = [{'arc_id': i, 'from_id': int(a[0]), 'to_id': int(a[1]), 'length_m': float(lengths[i])}
+               for i, a in enumerate(arcs) if lengths[i] > 0]
+    candidates = [[] for _ in range(len(track))]
+    pairs = frame[['obs_idx', 'arc_id', 'along_m']].itertuples(index=False)
+    for row, probability in zip(pairs, scores):
+        if lengths[row.arc_id] > 0:
+            candidates[row.obs_idx].append({'arc_id': int(row.arc_id),
+                'along_arc_m': float(row.along_m), 'probability': float(probability)})
+    observations = [{'obs_idx': i, 'timestamp': float(row.t), 'lon': float(row.lon),
+                     'lat': float(row.lat), 'candidates': candidates[i]}
+                    for i, row in enumerate(track.itertuples(index=False))]
+    return observations, network, candidates
 
 
 class Service:

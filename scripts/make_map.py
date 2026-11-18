@@ -11,8 +11,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from pathsnap import baseline, metrics, pipeline, viz
+from pathsnap import baseline, pipeline, viz
 from pathsnap.config import artifacts_dir, load_config, results_dir
+from hmm.model import TrainedHMM
 
 
 def main() -> None:
@@ -26,15 +27,19 @@ def main() -> None:
     cfg = load_config(args.config)
     model_path = artifacts_dir() / "model_bundle.joblib"
     model = baseline.load(model_path) if model_path.exists() else None
-    df, diag = pipeline.get_features(args.split, args.trip, cfg, include_labels=False, append_missing_labels=False)
     trip = pipeline.get_trip(args.split, args.trip)
-    chosen = None
-    if model is not None:
+    nodes, arcs = trip["nodes"], trip["arcs"]
+    pred_lines = []
+    if isinstance(model, TrainedHMM):
+        from api.service import predict_trip
+
+        pred_lines = predict_trip(dict(trip, route=None), model, cfg)["predicted_lines"]
+    elif model is not None:
+        df, _ = pipeline.get_features(args.split, args.trip, cfg, include_labels=False, append_missing_labels=False)
         scores = baseline.predict_scores(model, df)
         chosen = baseline.choose_one_per_observation(df, scores)
+        pred_lines = [pipeline.line_from_arcs(chosen["arc_id"].to_numpy(), nodes, arcs)]
 
-    nodes, arcs = trip["nodes"], trip["arcs"]
-    pred_line = pipeline.line_from_arcs(chosen["arc_id"].to_numpy(), nodes, arcs) if chosen is not None else None
     ref_line = (
         pipeline.line_from_arcs(trip["route"], nodes, arcs)
         if trip["route"] is not None
@@ -46,14 +51,14 @@ def main() -> None:
     fmap = viz.make_map(
         obs_lonlat=obs,
         network_segments_lonlat=network,
-        pred_line=pred_line,
+        pred_lines=pred_lines,
         ref_line=ref_line,
     )
     out = Path(args.out) if args.out else results_dir() / "maps" / f"{args.trip}.html"
     out.parent.mkdir(parents=True, exist_ok=True)
     fmap.save(str(out))
 
-    print(f"{args.trip}: {'baseline prediction included' if chosen is not None else 'map only; train baseline for prediction layer'}; wrote {out}")
+    print(f"{args.trip}: {'prediction included' if pred_lines else 'map only'}; wrote {out}")
 
 
 if __name__ == "__main__":

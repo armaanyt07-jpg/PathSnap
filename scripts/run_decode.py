@@ -1,5 +1,6 @@
 """Run from repo root: python scripts/run_decode.py --demo."""
 import argparse
+from dataclasses import replace
 import json
 import sys
 from pathlib import Path
@@ -14,7 +15,7 @@ def main():
     parser.add_argument('--trip', action='append')
     parser.add_argument('--model', type=Path, default=root / 'artifacts/model_bundle.joblib')
     parser.add_argument('--output', type=Path, default=root / 'results/part_c')
-    parser.add_argument('--beta-m', type=float, default=50)
+    parser.add_argument('--beta-m', type=float, help='Override the model transition scale in metres')
     parser.add_argument('--demo', action='store_true')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -30,11 +31,14 @@ def main():
     from pathsnap import io
     from pathsnap.config import load_config
     model, cfg = joblib.load(args.model), load_config()
+    decoder_config = None
+    if args.beta_m is not None:
+        decoder_config = replace(getattr(model, 'decoder_config', Config()), beta_m=args.beta_m)
     summary = []
     for trip_id in args.trip or io.trip_ids(args.split):
         if trip_id not in io.trip_ids(args.split):
             parser.error('Unknown trip id')
-        result = predict_trip(io.load_trip(args.split, trip_id), model, cfg, Config(beta_m=args.beta_m))
+        result = predict_trip(io.load_trip(args.split, trip_id), model, cfg, decoder_config)
         result['split'] = args.split
         (args.output / f'{args.split}_{trip_id}.json').write_text(json.dumps(result, indent=2, allow_nan=False), encoding='utf-8')
         summary.append({k: result[k] for k in ['trip_id', 'split', 'metrics', 'baseline_metrics', 'timings', 'decoder_config']})

@@ -6,6 +6,8 @@ import pandas as pd
 from fastapi.testclient import TestClient
 from api.main import create_app
 from api.service import predict_trip
+from hmm import Config
+from hmm.model import TrainedHMM
 
 CFG = {'k_candidates': 2, 'buffer_m': 300, 'network_prefilter': {'max_segments': 100}}
 
@@ -23,6 +25,21 @@ def fake_scores(model, frame):
 
 
 class IntegrationTests(unittest.TestCase):
+    def test_trained_hmm_uses_twenty_features_and_saved_transition_scale(self):
+        class EmissionModel:
+            def predict_proba(self, rows):
+                self.rows = rows
+                p = np.exp(-rows[:, 1] / 20)
+                return np.column_stack([1 - p, p])
+
+        emitter = EmissionModel()
+        model = TrainedHMM(emitter, Config(beta_m=19.5))
+        result = predict_trip(fixture(), model, CFG)
+        self.assertEqual(emitter.rows.shape[1], 20)
+        self.assertTrue(np.isfinite(emitter.rows).all())
+        self.assertEqual(result['decoder_config']['beta_m'], 19.5)
+        self.assertEqual(result['predicted_route'], [0, 1])
+
     @patch('api.service.baseline.predict_scores', side_effect=fake_scores)
     def test_reference_does_not_change_predictions(self, mocked):
         trip = fixture()

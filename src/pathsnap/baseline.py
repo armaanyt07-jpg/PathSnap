@@ -59,7 +59,8 @@ def predict_scores(model: Pipeline, df: pd.DataFrame) -> np.ndarray:
     with warnings.catch_warnings():
         # Same cosmetic NumPy 2 matmul warning as in fit(); outputs are finite.
         warnings.filterwarnings("ignore", message=".*in matmul", category=RuntimeWarning)
-        scores = model.predict_proba(df[FEATURE_COLUMNS].to_numpy(dtype=np.float32))[:, 1]
+        columns = getattr(model, "feature_columns", FEATURE_COLUMNS)
+        scores = model.predict_proba(df[list(columns)].to_numpy(dtype=np.float32))[:, 1]
     if not np.isfinite(scores).all():
         raise RuntimeError("Non-finite prediction scores")
     return scores

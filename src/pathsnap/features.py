@@ -21,6 +21,20 @@ FEATURE_COLUMNS = [
     "speed_mps",
 ]
 
+HMM_FEATURE_COLUMNS = [
+    *FEATURE_COLUMNS,
+    "next_gap_m",
+    "next_gap_s",
+    "next_speed_mps",
+    "acceleration_mps2",
+    "turn_angle_deg",
+    "incoming_heading_diff_deg",
+    "outgoing_heading_diff_deg",
+    "dist_to_start_m",
+    "dist_to_end_m",
+    "outgoing_arc_count",
+]
+
 
 def _point_segment(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
     ab = b - a
@@ -36,6 +50,7 @@ def build_trip_features(
     max_segments: int = 30_000,
     include_labels: bool = True,
     append_missing_labels: bool = True,
+    extended: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     track = trip["track"]
     nodes = trip["nodes"]
@@ -48,20 +63,21 @@ def build_trip_features(
     ts = track["t"].to_numpy(dtype=float)
     n = len(track)
 
-    proj = LocalProjection(np.median(lon), np.median(lat))
-    obs_xy = proj.xy(lon, lat)
-    nodes_xy = proj.xy(nodes[:, 0], nodes[:, 1])
-    a_all = nodes_xy[arcs[:, 0]]
-    b_all = nodes_xy[arcs[:, 1]]
-
     if n == 0:
-        return pd.DataFrame(columns=["trip_id", "obs_idx", *FEATURE_COLUMNS, "label"]), {
+        columns = HMM_FEATURE_COLUMNS if extended else FEATURE_COLUMNS
+        return pd.DataFrame(columns=["trip_id", "obs_idx", "arc_id", *columns, "label"]), {
             "trip_id": trip_id,
             "n_obs": 0,
             "n_labeled": 0,
             "n_rows": 0,
             "candidate_miss_rate": float("nan"),
         }
+
+    proj = LocalProjection(np.median(lon), np.median(lat))
+    obs_xy = proj.xy(lon, lat)
+    nodes_xy = proj.xy(nodes[:, 0], nodes[:, 1])
+    a_all = nodes_xy[arcs[:, 0]]
+    b_all = nodes_xy[arcs[:, 1]]
 
     ab = b_all - a_all
     seg_len = np.linalg.norm(ab, axis=1)
@@ -173,6 +189,37 @@ def build_trip_features(
                 }
             )
         frame = pd.concat([frame, pd.DataFrame(extras)], ignore_index=True)
+
+    if extended:
+        next_gap_m = np.r_[gap_m[1:], 0.0]
+        next_gap_s = np.r_[gap_s[1:], 0.0]
+        next_speed = np.r_[speed[1:], 0.0]
+        interval = (gap_s + next_gap_s) / 2
+        acceleration = np.divide(
+            next_speed - speed, interval, out=np.zeros(n), where=(gap_s > 0) & (next_gap_s > 0)
+        )
+        incoming = bearing_deg(prev, obs_xy)
+        outgoing = bearing_deg(obs_xy, nxt)
+        turn = np.where((gap_m > 0) & (next_gap_m > 0), angle_diff_abs(incoming, outgoing), 0.0)
+
+        i, a = frame["obs_idx"].to_numpy(int), frame["arc_id"].to_numpy(int)
+        onward = np.bincount(arcs[seg_len > 0, 0], minlength=len(nodes))
+        frame = frame.assign(
+            next_gap_m=next_gap_m[i],
+            next_gap_s=next_gap_s[i],
+            next_speed_mps=next_speed[i],
+            acceleration_mps2=acceleration[i],
+            turn_angle_deg=turn[i],
+            incoming_heading_diff_deg=angle_diff_abs(
+                np.where(gap_m > 0, incoming, obs_bearing)[i], seg_bearing[a]
+            ),
+            outgoing_heading_diff_deg=angle_diff_abs(
+                np.where(next_gap_m > 0, outgoing, obs_bearing)[i], seg_bearing[a]
+            ),
+            dist_to_start_m=np.linalg.norm(obs_xy[i] - a_all[a], axis=1),
+            dist_to_end_m=np.linalg.norm(obs_xy[i] - b_all[a], axis=1),
+            outgoing_arc_count=onward[arcs[a, 1]],
+        )
 
     frame = frame.sort_values(["obs_idx", "cand_rank"], kind="mergesort").reset_index(drop=True)
 
