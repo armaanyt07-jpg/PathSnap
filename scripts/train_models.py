@@ -55,7 +55,10 @@ def train_one(args, cfg, family: str) -> dict:
     params = dict(model_zoo.DEFAULT_PARAMS[family])
     if args.params_file:
         with open(args.params_file) as fh:
-            params.update(json.load(fh))
+            loaded = json.load(fh)
+        # tune_optuna.py writes a payload wrapping the params under "best_params";
+        # accept either that envelope or a plain parameter dict.
+        params.update(loaded.get("best_params", loaded))
     if args.params:
         params.update(json.loads(args.params))
 

@@ -1,0 +1,15 @@
+{
+  "family": "hist_gbdt",
+  "best_params": {
+    "learning_rate": 0.04696288059617787,
+    "max_iter": 100,
+    "max_leaf_nodes": 94,
+    "min_samples_leaf": 14,
+    "l2_regularization": 0.01589071745760843,
+    "class_weight": null
+  },
+  "best_cv_log_loss": 0.14046735622086937,
+  "n_trials": 60,
+  "n_pruned": 28,
+  "wall_seconds": 1169.2
+}
