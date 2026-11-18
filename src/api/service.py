@@ -19,7 +19,8 @@ def predict_trip(trip, model, cfg, decoder_config=None):
     trained_hmm = isinstance(model, TrainedHMM)
     frame, _ = features.build_trip_features(dict(trip, route=None),
         k=int(cfg['k_candidates']), buffer_m=float(cfg['buffer_m']),
-        max_segments=int(cfg['network_prefilter']['max_segments']), extended=trained_hmm)
+        max_segments=int(cfg['network_prefilter']['max_segments']), extended=trained_hmm,
+        heading_window=model.heading_window if trained_hmm else 1)
     feature_end = perf_counter()
     scores = baseline.predict_scores(model, frame) if len(frame) else np.array([])
     if scores.shape != (len(frame),):

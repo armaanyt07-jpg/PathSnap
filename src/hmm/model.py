@@ -10,6 +10,7 @@ class TrainedHMM:
     emission_model: object
     decoder_config: Config
     feature_columns: tuple[str, ...] = tuple(HMM_FEATURE_COLUMNS)
+    heading_window: int = 1
 
     def predict_proba(self, X):
         return self.emission_model.predict_proba(X)

@@ -36,6 +36,11 @@ HMM_FEATURE_COLUMNS = [
 ]
 
 
+def centered_heading(obs_xy: np.ndarray, window: int) -> np.ndarray:
+    index = np.arange(len(obs_xy))
+    return bearing_deg(obs_xy[np.maximum(0, index - window)], obs_xy[np.minimum(len(index) - 1, index + window)])
+
+
 def _point_segment(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
     ab = b - a
     denom = float(ab @ ab)
@@ -51,6 +56,7 @@ def build_trip_features(
     include_labels: bool = True,
     append_missing_labels: bool = True,
     extended: bool = False,
+    heading_window: int = 1,
 ) -> tuple[pd.DataFrame, dict]:
     track = trip["track"]
     nodes = trip["nodes"]
@@ -114,6 +120,7 @@ def build_trip_features(
         gap_m = np.zeros(n)
         gap_s = np.zeros(n)
     obs_bearing = bearing_deg(prev, nxt)
+    centered_bearing = centered_heading(obs_xy, heading_window) if heading_window != 1 else obs_bearing
     speed = np.where(gap_s > 0, gap_m / np.maximum(gap_s, 1e-9), 0.0)
 
     # 4. Flatten (obs, candidate) pairs
@@ -140,7 +147,7 @@ def build_trip_features(
             "rel_pos": rel,
             "arc_len_m": arc_len,
             "dist_ratio": perp / np.maximum(arc_len, 1e-6),
-            "heading_diff_deg": angle_diff_abs(obs_bearing[obs_idx], seg_bearing[arc_id]),
+            "heading_diff_deg": angle_diff_abs(centered_bearing[obs_idx], seg_bearing[arc_id]),
             "gap_m": gap_m[obs_idx],
             "gap_s": gap_s[obs_idx],
             "speed_mps": speed[obs_idx],
@@ -178,7 +185,7 @@ def build_trip_features(
                     "arc_len_m": length,
                     "dist_ratio": d / max(length, 1e-6),
                     "heading_diff_deg": float(
-                        angle_diff_abs(obs_bearing[i], seg_bearing[arc])
+                        angle_diff_abs(centered_bearing[i], seg_bearing[arc])
                     ),
                     "gap_m": float(gap_m[i]),
                     "gap_s": float(gap_s[i]),

@@ -105,6 +105,15 @@ python scripts/run_decode.py --split student_test
 
 Training reuses the trip-level development and holdout split. The histogram gradient boosting emission model uses 20 candidate, GPS motion, and road-network features. Training also fits the transition distance scale from consecutive reference matches on development trips. The API and decoder CLI load both parts from `artifacts/model_bundle.joblib`. `results/hmm_20_metrics.json` compares Viterbi with independent selection from the same emission scores on the holdout and student-test trips.
 
+To optimize observation accuracy, run the development-only tuning search and decode with the saved bundle:
+
+```bash
+python scripts/tune_hmm.py
+python scripts/run_decode.py --model artifacts/hmm_20_tuned.joblib --split student_test
+```
+
+The search selects emission and decoder parameters using a trip-level validation subset of the development data. It then trains the selected emitter on all development trips and reports accuracy, candidate coverage, and continuity on the holdout and student-test sets in `results/hmm_20_tuned_metrics.json`. Use `--refine` for a finer transition search or `--heading-search` to test wider GPS heading windows with the same 20 features. These modes save separate `hmm_20_refined` and `hmm_20_heading` bundles and reports.
+
 ## Modelling (workstream B)
 
 ```bash

@@ -10,10 +10,23 @@ class Config:
     max_gap_s: float = 120.0
     max_speed_mps: float = 55.0
     distance_slack_m: float = 50.0
+    emission_weight: float = 1.0
+    backtrack_tolerance_m: float = 0.0
+    restart_penalty: float | None = None
+    emission_log_odds: bool = False
+    normalize_transitions: bool = True
+    arc_switch_penalty: float = 0.0
 
     def __post_init__(self):
-        if any(not isfinite(v) or v <= 0 for v in asdict(self).values()):
+        positive = [self.beta_m, self.max_gap_s, self.max_speed_mps, self.distance_slack_m, self.emission_weight]
+        if self.restart_penalty is not None:
+            positive.append(self.restart_penalty)
+        if any(not isfinite(v) or v <= 0 for v in positive):
             raise ValueError('Decoder parameters must be finite and positive')
+        if not isfinite(self.backtrack_tolerance_m) or self.backtrack_tolerance_m < 0:
+            raise ValueError('Backtrack tolerance must be finite and non-negative')
+        if not isfinite(self.arc_switch_penalty) or self.arc_switch_penalty < 0:
+            raise ValueError('Arc switch penalty must be finite and non-negative')
 
 
 class Network:
@@ -45,11 +58,11 @@ class Network:
                     heappush(queue, (score, nxt))
         return inf, []
 
-    def travel(self, left, right, limit):
+    def travel(self, left, right, limit, backtrack_tolerance_m=0.0):
         a, b = left['arc_id'], right['arc_id']
         x, y = left['along_arc_m'], right['along_arc_m']
-        if a == b and y >= x:
-            return (y - x, [a]) if y - x <= limit else (inf, [])
+        if a == b and y >= x - backtrack_tolerance_m:
+            return (max(0.0, y - x), [a]) if y - x <= limit else (inf, [])
         _, end, length = self.arcs[a]
         start, _, _ = self.arcs[b]
         remainder = length - x + y
@@ -70,7 +83,7 @@ def decode(observations, arcs, config=None):
     cfg = config or Config()
     network = Network(arcs)
     obs = observations
-    emissions, baseline = [], []
+    emissions, emission_scores, baseline = [], [], []
     previous_idx = previous_time = None
     for o in obs:
         for key in ('timestamp', 'lon', 'lat'):
@@ -95,6 +108,10 @@ def decode(observations, arcs, config=None):
         total = sum(weights)
         probabilities = [p / total for p in weights]
         emissions.append(probabilities)
+        emission_scores.append([
+            cfg.emission_weight * (log(p) - (log(max(1 - p, 1e-12)) if cfg.emission_log_odds else 0))
+            for p in weights
+        ])
         baseline.append(max(range(len(weights)), key=weights.__getitem__) if weights else None)
 
     chosen, breaks = [None] * len(obs), []
@@ -108,6 +125,9 @@ def decode(observations, arcs, config=None):
             chosen[t] = state
             if t > start:
                 state = pointers[t - start][state]
+                if state < 0:
+                    breaks.append({'obs_idx': obs[t]['obs_idx'], 'reason': 'low_transition_confidence'})
+                    state = -state - 1
 
     for t, o in enumerate(obs):
         reason = None
@@ -116,7 +136,7 @@ def decode(observations, arcs, config=None):
             start, scores, pointers = None, [], []
             breaks.append({'obs_idx': o['obs_idx'], 'reason': 'missing_candidates'})
             continue
-        e = [log(p) for p in emissions[t]]
+        e = emission_scores[t]
         if start is not None:
             dt = o['timestamp'] - obs[t - 1]['timestamp']
             if dt > cfg.max_gap_s:
@@ -128,19 +148,25 @@ def decode(observations, arcs, config=None):
                 for left in obs[t - 1]['candidates']:
                     row = []
                     for right in o['candidates']:
-                        distance, _ = network.travel(left, right, limit)
-                        row.append(-abs(distance - displacement) / cfg.beta_m)
+                        distance, _ = network.travel(left, right, limit, cfg.backtrack_tolerance_m)
+                        switch = cfg.arc_switch_penalty if left['arc_id'] != right['arc_id'] else 0.0
+                        row.append(-abs(distance - displacement) / cfg.beta_m - switch)
                     finite = [v for v in row if isfinite(v)]
-                    if finite:
+                    if finite and cfg.normalize_transitions:
                         m = max(finite)
                         norm = m + log(sum(exp(v - m) for v in finite))
                         row = [v - norm for v in row]
                     transitions.append(row)
                 next_scores, back = [], []
+                prev_best = max(range(len(scores)), key=scores.__getitem__)
+                restart_score = scores[prev_best] - (cfg.restart_penalty or inf)
                 for j in range(len(e)):
                     alternatives = [scores[i] + row[j] for i, row in enumerate(transitions)]
                     best = max(range(len(alternatives)), key=alternatives.__getitem__)
-                    next_scores.append(e[j] + alternatives[best])
+                    best_score = alternatives[best]
+                    if restart_score > best_score:
+                        best_score, best = restart_score, -prev_best - 1
+                    next_scores.append(e[j] + best_score)
                     back.append(best)
                 if any(isfinite(s) for s in next_scores):
                     scores = next_scores
@@ -153,6 +179,7 @@ def decode(observations, arcs, config=None):
         start, scores, pointers = t, e, [None]
     finish(len(obs) - 1)
 
+    breaks.sort(key=lambda item: item['obs_idx'])
     break_ids = {b['obs_idx'] for b in breaks}
     output, segments, segment, baseline_route = [], [], [], []
     previous = None
@@ -173,7 +200,8 @@ def decode(observations, arcs, config=None):
                 segment.append(c['arc_id'])
             else:
                 dt = o['timestamp'] - obs[t - 1]['timestamp']
-                _, bridge = network.travel(previous, c, cfg.max_speed_mps * dt + cfg.distance_slack_m)
+                _, bridge = network.travel(previous, c, cfg.max_speed_mps * dt + cfg.distance_slack_m,
+                                           cfg.backtrack_tolerance_m)
                 segment.extend(bridge[1:])
             previous = c
         output.append({k: o[k] for k in ('obs_idx', 'timestamp', 'lon', 'lat')} | {

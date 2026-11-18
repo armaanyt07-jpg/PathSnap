@@ -64,6 +64,19 @@ class DecoderTests(unittest.TestCase):
         distance, _ = net.travel({'arc_id': 10, 'along_arc_m': 80}, {'arc_id': 10, 'along_arc_m': 20}, 500)
         self.assertEqual(distance, float('inf'))
 
+    def test_small_backwards_projection_can_be_treated_as_gps_jitter(self):
+        net = Network(self.data['arcs'])
+        left = {'arc_id': 10, 'along_arc_m': 80}
+        right = {'arc_id': 10, 'along_arc_m': 77}
+        self.assertEqual(net.travel(left, right, 500, backtrack_tolerance_m=4), (0.0, [10]))
+        self.assertEqual(net.travel(left, right, 500, backtrack_tolerance_m=2)[0], float('inf'))
+
+    def test_optional_restart_marks_disconnected_segments(self):
+        self.data['observations'][1]['candidates'] = [self.data['observations'][1]['candidates'][1]]
+        result = decode(self.data['observations'], self.data['arcs'], Config(restart_penalty=2))
+        self.assertEqual(result['route_segments'], [[10], [99], [12]])
+        self.assertEqual([b['reason'] for b in result['breaks']], ['low_transition_confidence'] * 2)
+
     def test_invalid_config(self):
         with self.assertRaises(ValueError):
             Config(beta_m=0)
