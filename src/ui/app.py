@@ -23,6 +23,20 @@ PRED_COLOR = "#f07818"
 OBS_COLOR = "#1769aa"
 EXPERIMENTS_PATH = Path(__file__).resolve().parents[2] / "results" / "experiments.csv"
 
+MODEL_LABELS = {
+    "champion": "champion (promoted bundle)",
+    "hist_gbdt": "Hist GBDT",
+    "extra_trees": "Extra Trees",
+    "mlp": "MLP",
+    "nystroem_sgd": "Nystroem SGD",
+    "logistic": "Logistic",
+    "sgd_huber": "SGD Huber",
+}
+
+
+def _model_label(name: str) -> str:
+    return MODEL_LABELS.get(name, name.replace("_", " ").title())
+
 
 def _api_message(response: requests.Response) -> str:
     try:
@@ -61,6 +75,22 @@ def fetch_trips(base: str) -> list[str]:
     return [str(trip) for trip in trips]
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_models(base: str) -> tuple[list[str], str | None]:
+    """Model names offered by the API; empty on an older API without /models."""
+    try:
+        response = requests.get(f"{base}/models", timeout=5)
+        if response.status_code == 404:
+            return [], None
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        return [], None
+    models = [str(name) for name in (payload.get("models") or [])]
+    default = payload.get("default")
+    return models, str(default) if default else None
+
+
 st.title("PathSnap")
 st.caption("GPS route reconstruction · predictions and aggregate evaluation from the FastAPI service")
 
@@ -75,6 +105,8 @@ with st.sidebar:
             st.success("API connected")
             if not health.get("model_loaded"):
                 st.warning("API is reachable, but no model bundle is loaded.")
+            else:
+                st.caption(f"{len(health.get('models') or [])} scoring models available")
         except (requests.RequestException, ValueError) as exc:
             st.error(f"API health check failed: {exc}")
 
@@ -96,17 +128,37 @@ trip_tab, compare_tab = st.tabs(["Trip reconstruction", "Model comparison"])
 
 with trip_tab:
     trip_id = st.selectbox("Reserved trip", trips, help="The API supplies the available student-test trips.")
+
+    model_names, default_model = fetch_models(api_base)
+    model_choice = default_model
+    if model_names:
+        default_index = model_names.index(default_model) if default_model in model_names else 0
+        model_choice = st.selectbox(
+            "Scoring model",
+            model_names,
+            index=default_index,
+            format_func=_model_label,
+            help="The champion is the bundle promoted by scripts/train_models.py; "
+                 "the other entries are the saved comparison models.",
+        )
+
     run = st.button("Reconstruct route", type="primary")
 
     if run:
         st.session_state.pop("result", None)
+        payload = {"trip_id": trip_id}
+        if model_choice and model_choice != default_model:
+            payload["model"] = model_choice
         with st.spinner("Building features and reconstructing the route…"):
             try:
                 response = requests.post(
-                    f"{api_base}/predict", json={"trip_id": trip_id}, timeout=(5, 300)
+                    f"{api_base}/predict", json=payload, timeout=(5, 300)
                 )
                 response.raise_for_status()
-                st.session_state["result"] = public_prediction_payload(response.json())
+                st.session_state["result"] = {
+                    **public_prediction_payload(response.json()),
+                    "model": model_choice,
+                }
             except requests.HTTPError as exc:
                 detail = _api_message(exc.response) if exc.response is not None else str(exc)
                 st.error(f"Prediction request failed: {detail}")
@@ -119,6 +171,12 @@ with trip_tab:
 
     result = st.session_state.get("result")
     if result and result["trip_id"] == trip_id:
+        if result.get("model") != model_choice:
+            st.info(
+                "Showing the previous run scored with "
+                f"{_model_label(result.get('model') or default_model or 'served bundle')}; "
+                "press Reconstruct to score this trip with the selected model."
+            )
         m = result["metrics"]
         timings = result["timings"]
         cols = st.columns(5)
@@ -156,7 +214,9 @@ with trip_tab:
                 folium.LayerControl(collapsed=False).add_to(fmap)
                 html(fmap._repr_html_(), height=620)
 
+        scored_with = result.get("model") or default_model
         st.caption(
+            f"Model: **{_model_label(scored_with) if scored_with else 'served bundle'}** · "
             f"Decoder: **{result['decoder']}** · {result['n_observations']:,} observations · "
             f"feature build {_format_metric(timings.get('features_ms'), 1)} ms · "
             f"total {_format_metric(timings.get('total_ms'), 1)} ms"
