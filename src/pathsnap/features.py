@@ -34,6 +34,8 @@ def build_trip_features(
     k: int = 10,
     buffer_m: float = 300.0,
     max_segments: int = 30_000,
+    include_labels: bool = True,
+    append_missing_labels: bool = True,
 ) -> tuple[pd.DataFrame, dict]:
     track = trip["track"]
     nodes = trip["nodes"]
@@ -66,7 +68,7 @@ def build_trip_features(
     seg_bearing = bearing_deg(a_all, b_all)
 
     # 1. Reference labels
-    if route is not None and len(route) > 0:
+    if include_labels and route is not None and len(route) > 0:
         lab = map_observations_to_route(obs_xy, route, a_all, b_all)
     else:
         lab = {
@@ -138,7 +140,7 @@ def build_trip_features(
     missing = np.flatnonzero((label_arc >= 0) & ~has_label)
     n_labeled = int((label_arc >= 0).sum())
 
-    if missing.size:
+    if append_missing_labels and missing.size:
         extras = []
         for i in missing:
             arc = int(label_arc[i])

@@ -1,0 +1,19 @@
+{
+  "synthetic": true,
+  "arcs": [
+    {"arc_id": 10, "from_id": 0, "to_id": 1, "length_m": 100},
+    {"arc_id": 11, "from_id": 1, "to_id": 2, "length_m": 100},
+    {"arc_id": 12, "from_id": 2, "to_id": 3, "length_m": 100},
+    {"arc_id": 99, "from_id": 8, "to_id": 9, "length_m": 100}
+  ],
+  "observations": [
+    {"obs_idx": 0, "timestamp": 0, "lon": 77.0, "lat": 12.0, "candidates": [
+      {"arc_id": 10, "along_arc_m": 20, "probability": 0.9},
+      {"arc_id": 99, "along_arc_m": 10, "probability": 0.1}]},
+    {"obs_idx": 1, "timestamp": 10, "lon": 77.0005, "lat": 12.0, "candidates": [
+      {"arc_id": 10, "along_arc_m": 80, "probability": 0.4},
+      {"arc_id": 99, "along_arc_m": 50, "probability": 0.6}]},
+    {"obs_idx": 2, "timestamp": 20, "lon": 77.002, "lat": 12.0, "candidates": [
+      {"arc_id": 12, "along_arc_m": 30, "probability": 1.0}]}
+  ]
+}

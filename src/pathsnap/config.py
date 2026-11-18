@@ -3,7 +3,8 @@
 Data root precedence:
   1. $PATHSNAP_DATA_DIR
   2. <repo>/data            (if it contains train/)
-  3. <repo>/../materials/student/Student folder   (local convenience)
+  3. <repo>                 (if it contains train/ and student_test/)
+  4. <repo>/../materials/student/Student folder   (local convenience)
 """
 from __future__ import annotations
 
@@ -24,9 +25,14 @@ def data_dir() -> Path:
     env = os.environ.get("PATHSNAP_DATA_DIR")
     if env:
         return Path(env).expanduser()
-    for candidate in (ROOT / "data", ROOT.parent / "materials" / "student" / "Student folder"):
-        if (candidate / "train").exists():
-            return candidate
+    local_data = ROOT / "data"
+    if (local_data / "train").exists():
+        return local_data
+    if (ROOT / "train").exists() and (ROOT / "student_test").exists():
+        return ROOT
+    materials = ROOT.parent / "materials" / "student" / "Student folder"
+    if (materials / "train").exists():
+        return materials
     return ROOT / "data"
 
 

@@ -46,11 +46,17 @@ def main() -> None:
         t0 = time.time()
         for i, tid in enumerate(ids, 1):
             trip = io.load_trip(split, tid)
+            # Student-test truth is retained for offline scoring, but must not
+            # alter candidates. Training positives may be appended as specified
+            # by the feature contract.
+            append_missing = split == cfg["splits"]["train"]
             frame, diag = build_trip_features(
                 trip,
                 k=int(cfg["k_candidates"]),
                 buffer_m=float(cfg["buffer_m"]),
                 max_segments=int(cfg["network_prefilter"]["max_segments"]),
+                include_labels=True,
+                append_missing_labels=append_missing,
             )
             frames.append(frame)
             diags.append(diag)

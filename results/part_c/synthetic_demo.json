@@ -1,0 +1,75 @@
+{
+  "observations": [
+    {
+      "obs_idx": 0,
+      "timestamp": 0,
+      "lon": 77.0,
+      "lat": 12.0,
+      "arc_id": 10,
+      "baseline_arc_id": 10,
+      "candidate_ids": [
+        10,
+        99
+      ],
+      "probabilities": [
+        0.9,
+        0.1
+      ]
+    },
+    {
+      "obs_idx": 1,
+      "timestamp": 10,
+      "lon": 77.0005,
+      "lat": 12.0,
+      "arc_id": 10,
+      "baseline_arc_id": 99,
+      "candidate_ids": [
+        10,
+        99
+      ],
+      "probabilities": [
+        0.4,
+        0.6
+      ]
+    },
+    {
+      "obs_idx": 2,
+      "timestamp": 20,
+      "lon": 77.002,
+      "lat": 12.0,
+      "arc_id": 12,
+      "baseline_arc_id": 12,
+      "candidate_ids": [
+        12
+      ],
+      "probabilities": [
+        1.0
+      ]
+    }
+  ],
+  "predicted_route": [
+    10,
+    11,
+    12
+  ],
+  "baseline_route": [
+    10,
+    99,
+    12
+  ],
+  "route_segments": [
+    [
+      10,
+      11,
+      12
+    ]
+  ],
+  "breaks": [],
+  "decoder_config": {
+    "beta_m": 50.0,
+    "max_gap_s": 120.0,
+    "max_speed_mps": 55.0,
+    "distance_slack_m": 50.0
+  },
+  "synthetic": true
+}

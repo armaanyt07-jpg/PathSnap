@@ -25,17 +25,16 @@ def main() -> None:
 
     cfg = load_config(args.config)
     model_path = artifacts_dir() / "model_bundle.joblib"
-    if not model_path.exists():
-        raise SystemExit("No model bundle. Run scripts/train_baseline.py first.")
-    model = baseline.load(model_path)
-
-    df, diag = pipeline.get_features(args.split, args.trip, cfg)
+    model = baseline.load(model_path) if model_path.exists() else None
+    df, diag = pipeline.get_features(args.split, args.trip, cfg, include_labels=False, append_missing_labels=False)
     trip = pipeline.get_trip(args.split, args.trip)
-    scores = baseline.predict_scores(model, df)
-    chosen = baseline.choose_one_per_observation(df, scores)
+    chosen = None
+    if model is not None:
+        scores = baseline.predict_scores(model, df)
+        chosen = baseline.choose_one_per_observation(df, scores)
 
     nodes, arcs = trip["nodes"], trip["arcs"]
-    pred_line = pipeline.line_from_arcs(chosen["arc_id"].to_numpy(), nodes, arcs)
+    pred_line = pipeline.line_from_arcs(chosen["arc_id"].to_numpy(), nodes, arcs) if chosen is not None else None
     ref_line = (
         pipeline.line_from_arcs(trip["route"], nodes, arcs)
         if trip["route"] is not None
@@ -54,14 +53,7 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     fmap.save(str(out))
 
-    met = metrics.classification_metrics(
-        chosen["label_arc"].to_numpy(), chosen["arc_id"].to_numpy()
-    )
-    print(
-        f"{args.trip}: top1={met['top1_accuracy']:.3f} macroF1={met['macro_f1']:.3f} "
-        f"continuity={metrics.route_continuity(chosen['arc_id'].to_numpy(), arcs):.3f} "
-        f"miss={diag['candidate_miss_rate']:.3f}\nwrote {out}"
-    )
+    print(f"{args.trip}: {'baseline prediction included' if chosen is not None else 'map only; train baseline for prediction layer'}; wrote {out}")
 
 
 if __name__ == "__main__":

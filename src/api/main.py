@@ -1,126 +1,69 @@
-"""PathSnap FastAPI backend (owner: C). Skeleton decoder = per-observation argmax.
-
-Run (Laptop 1):
-    PYTHONPATH=src uvicorn api.main:app --host 0.0.0.0 --port 8000
-
-Ground truth stays server-side: metrics are aggregate only, geometry is predicted only.
-"""
-from __future__ import annotations
-
-import sys
-import time
+"""Laptop 1: PYTHONPATH=src python -m uvicorn api.main:app --host 0.0.0.0 --port 8000."""
+import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # <repo>/src
-
 import joblib
-import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-
-from pathsnap import baseline, io as psio, metrics, pipeline
-from pathsnap.config import artifacts_dir, load_config
-
-CFG = load_config()
-MODEL_PATH = artifacts_dir() / "model_bundle.joblib"
-_MODEL = None
-
-app = FastAPI(title="PathSnap API", version="0.1.0-phase1")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # tighten at final deployment if required
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-def get_model():
-    global _MODEL
-    if _MODEL is None and MODEL_PATH.exists():
-        _MODEL = joblib.load(MODEL_PATH)
-    return _MODEL
+from pydantic import BaseModel, ConfigDict, Field
+from pathsnap.config import ROOT, load_config
+from .service import Service
 
 
 class PredictRequest(BaseModel):
-    trip_id: str
+    model_config = ConfigDict(extra='forbid')
+    trip_id: str = Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_-]+$')
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "model_loaded": MODEL_PATH.exists()}
+def create_app(service=None):
+    @asynccontextmanager
+    async def lifespan(app):
+        app.state.service = service
+        if service is None:
+            path = Path(os.getenv('PATHSNAP_MODEL', str(ROOT / 'artifacts/model_bundle.joblib')))
+            if path.exists():
+                app.state.service = Service(joblib.load(path), load_config())
+        yield
+
+    app = FastAPI(title='PathSnap API', version='0.2.0-hmm', lifespan=lifespan)
+    app.add_middleware(CORSMiddleware,
+        allow_origins=[x.strip() for x in os.getenv('PATHSNAP_CORS', 'http://localhost:8501').split(',') if x.strip()],
+        allow_methods=['GET', 'POST'], allow_headers=['Content-Type'])
+
+    @app.get('/health')
+    def health():
+        loaded = app.state.service is not None
+        return {'status': 'ok' if loaded else 'not_ready', 'model_loaded': loaded}
+
+    @app.get('/trips')
+    def trips():
+        try:
+            if app.state.service is not None:
+                return {'trips': app.state.service.trip_ids()}
+            from pathsnap import io
+            return {'trips': io.trip_ids(load_config()['splits']['student_test'])}
+        except FileNotFoundError:
+            raise HTTPException(503, 'Data unavailable; configure PATHSNAP_DATA_DIR') from None
+
+    @app.post('/predict')
+    def predict(request: PredictRequest):
+        svc = app.state.service
+        if svc is None:
+            raise HTTPException(503, 'No model loaded. Supply the model bundle and restart the server.')
+        try:
+            if request.trip_id not in svc.trip_ids():
+                raise HTTPException(404, 'Unknown trip_id')
+            return svc.predict(request.trip_id)
+        except HTTPException:
+            raise
+        except FileNotFoundError:
+            raise HTTPException(503, 'Trip data unavailable on server') from None
+        except Exception:
+            logging.exception('Prediction failed for %s', request.trip_id)
+            raise HTTPException(500, 'Prediction failed; inspect server logs') from None
+
+    return app
 
 
-@app.get("/trips")
-def trips():
-    try:
-        ids = psio.trip_ids(CFG["splits"]["student_test"])
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    return {"trips": ids}
-
-
-@app.post("/predict")
-def predict(req: PredictRequest):
-    t0 = time.perf_counter()
-    model = get_model()
-    if model is None:
-        raise HTTPException(
-            status_code=503,
-            detail="No model bundle. Run scripts/train_baseline.py first.",
-        )
-
-    split = CFG["splits"]["student_test"]
-    try:
-        df, diag = pipeline.get_features(split, req.trip_id, CFG)
-        trip = pipeline.get_trip(split, req.trip_id)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Unknown trip '{req.trip_id}'")
-
-    t_feat = time.perf_counter()
-
-    scores = baseline.predict_scores(model, df)
-    chosen = baseline.choose_one_per_observation(df, scores)
-    pred_arcs = chosen["arc_id"].to_numpy(dtype=np.int64)
-
-    # ---- decoder hook (owner: C) -------------------------------------------
-    # Replace this argmax with HMM/Viterbi over the candidate lattice:
-    #   states  = candidate arcs per observation
-    #   emission= the `scores` above (calibrated probabilities)
-    #   transition = arc adjacency from trip["arcs"] + distance
-    #   keep candidate <-> arc correspondence; handle gaps / missing candidates.
-    # Then compare classifier-only vs HMM in the report (§5).
-    decoder = "argmax-baseline"
-    # ------------------------------------------------------------------------
-
-    t_inf = time.perf_counter()
-
-    nodes, arcs = trip["nodes"], trip["arcs"]
-    pred_line = pipeline.line_from_arcs(pred_arcs, nodes, arcs)
-
-    label_arc = chosen["label_arc"].to_numpy()
-    result = metrics.classification_metrics(label_arc, pred_arcs)
-    result.update(metrics.candidate_prf(df["label"].to_numpy(), scores))
-    result["candidate_log_loss"] = metrics.candidate_log_loss(
-        df["label"].to_numpy(), scores
-    )
-    result["candidate_miss_rate"] = diag["candidate_miss_rate"]
-    result["route_continuity"] = metrics.route_continuity(pred_arcs, arcs)
-
-    track = trip["track"]
-    return {
-        "trip_id": req.trip_id,
-        "decoder": decoder,
-        "n_observations": int(len(track)),
-        "observations": np.column_stack(
-            [track["lon"].to_numpy(float), track["lat"].to_numpy(float)]
-        ).round(7).tolist(),
-        "predicted_route": pred_arcs.tolist(),
-        "predicted_line": pred_line.round(7).tolist(),
-        "metrics": result,
-        "timings": {
-            "features_ms": round((t_feat - t0) * 1000, 1),
-            "inference_ms": round((t_inf - t_feat) * 1000, 1),
-            "total_ms": round((time.perf_counter() - t0) * 1000, 1),
-        },
-    }
+app = create_app()
