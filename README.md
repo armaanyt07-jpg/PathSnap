@@ -10,7 +10,7 @@ The final HMM/Viterbi decoder, five-model comparison, Bayesian search, trained m
 
 ## Requirements and data
 
-- Ubuntu or another Linux environment with Python 3.10+.
+- Python 3.10+ on Linux or Windows PowerShell 5.1+ / PowerShell 7+.
 - Dataset root containing `train/` and `student_test/`. The current checkout has these folders in the repository root.
 - A trained bundle at `artifacts/model_bundle.joblib` before `/predict` can serve predictions.
 - Install the application requirements in a virtual environment:
@@ -21,6 +21,15 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 export PATHSNAP_DATA_DIR="$PWD"
+```
+
+On Windows PowerShell, create and activate the environment with:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+$env:PATHSNAP_DATA_DIR = (Get-Location).Path
 ```
 
 `PATHSNAP_DATA_DIR` can point to a different dataset root. Without it, PathSnap searches `<repo>/data`, the repository root, then the team's local materials fallback.
@@ -36,6 +45,8 @@ bash scripts/run_all.sh
 
 Open `http://localhost:8501`. The combined script starts the API on `127.0.0.1:8000`, checks `/health`, then starts Streamlit. Ctrl+C stops the services.
 
+On Windows PowerShell, run `.\scripts\run_all.ps1` from the repository root. It starts the API in a hidden background process, waits for `/health`, then runs Streamlit in the current window; Ctrl+C stops the API too. API logs are written under `%TEMP%` as `pathsnap-api.log` and `pathsnap-api-error.log`.
+
 ## Start on two laptops
 
 On Laptop 1, which has the dataset and model bundle:
@@ -47,11 +58,27 @@ export PATHSNAP_API_PORT=8000
 bash scripts/run_api.sh
 ```
 
+Windows PowerShell equivalent:
+
+```powershell
+$env:PATHSNAP_DATA_DIR = (Get-Location).Path
+$env:PATHSNAP_API_HOST = '0.0.0.0'
+$env:PATHSNAP_API_PORT = '8000'
+.\scripts\run_api.ps1
+```
+
 On Laptop 2, set Laptop 1's private LAN address:
 
 ```bash
 export PATHSNAP_API_URL=http://<LAPTOP_1_PRIVATE_IP>:8000
 bash scripts/run_ui.sh
+```
+
+Windows PowerShell equivalent:
+
+```powershell
+$env:PATHSNAP_API_URL = 'http://<LAPTOP_1_PRIVATE_IP>:8000'
+.\scripts\run_ui.ps1
 ```
 
 Open `http://localhost:8501` on Laptop 2. Allow inbound TCP 8000 on Laptop 1 for the trusted local network if required by its firewall. Keep the API off public networks. The UI's sidebar checks `/health` and reports API connectivity. Full instructions and a demo sequence are in [docs/demo.md](docs/demo.md).
@@ -67,6 +94,8 @@ Reference labels and reference geometry stay on the server. For details see [doc
 ## Data and model build
 
 `scripts/run_phase1.sh` runs inventory, feature generation, baseline training, and an offline map. It is a build command and can replace generated feature files and the baseline artifact; it also appends a row to `results/experiments.csv`. Do not run it over existing artifacts you need to preserve. The per-step commands are in the script headers and `PathSnap_Team_Plan.md`.
+
+On Windows, the equivalent is `.\scripts\run_phase1.ps1`. It also runs the EDA summary. Optional environment variables match the shell workflow: `PATHSNAP_LIMIT`, `NEG_FRAC`, and `MAP_TRIP`.
 
 ## Tests
 
