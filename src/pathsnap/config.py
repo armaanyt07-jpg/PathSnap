@@ -24,7 +24,7 @@ def data_dir() -> Path:
     env = os.environ.get("PATHSNAP_DATA_DIR")
     if env:
         return Path(env).expanduser()
-    for candidate in (ROOT / "data", ROOT.parent / "materials" / "student" / "Student folder"):
+    for candidate in (ROOT, ROOT / "data", ROOT.parent / "materials" / "student" / "Student folder"):
         if (candidate / "train").exists():
             return candidate
     return ROOT / "data"

@@ -72,7 +72,9 @@ def predict(req: PredictRequest):
 
     split = CFG["splits"]["student_test"]
     try:
-        df, diag = pipeline.get_features(split, req.trip_id, CFG)
+        # Candidate generation is route-blind; reference labels are only used
+        # after prediction to compute aggregate server-side evaluation metrics.
+        df, diag = pipeline.get_features(split, req.trip_id, CFG, include_labels=False, append_missing_labels=False)
         trip = pipeline.get_trip(split, req.trip_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Unknown trip '{req.trip_id}'")
@@ -98,13 +100,19 @@ def predict(req: PredictRequest):
     nodes, arcs = trip["nodes"], trip["arcs"]
     pred_line = pipeline.line_from_arcs(pred_arcs, nodes, arcs)
 
-    label_arc = chosen["label_arc"].to_numpy()
+    # Fetch reference labels only after candidate scoring/decoding. This second
+    # table does not contribute any rows or features to the prediction.
+    scored_df, label_diag = pipeline.get_features(
+        split, req.trip_id, CFG, include_labels=True, append_missing_labels=False
+    )
+    label_by_obs = scored_df.drop_duplicates("obs_idx").set_index("obs_idx")["label_arc"]
+    label_arc = chosen["obs_idx"].map(label_by_obs).fillna(-1).to_numpy(dtype=np.int64)
     result = metrics.classification_metrics(label_arc, pred_arcs)
     result.update(metrics.candidate_prf(df["label"].to_numpy(), scores))
     result["candidate_log_loss"] = metrics.candidate_log_loss(
         df["label"].to_numpy(), scores
     )
-    result["candidate_miss_rate"] = diag["candidate_miss_rate"]
+    result["candidate_miss_rate"] = label_diag["candidate_miss_rate"]
     result["route_continuity"] = metrics.route_continuity(pred_arcs, arcs)
 
     track = trip["track"]

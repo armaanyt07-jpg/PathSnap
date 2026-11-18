@@ -18,9 +18,9 @@ def get_trip(split: str, trip_id: str) -> dict:
     return _TRIPS[key]
 
 
-def get_features(split: str, trip_id: str, cfg: dict | None = None):
+def get_features(split: str, trip_id: str, cfg: dict | None = None, *, include_labels: bool = True, append_missing_labels: bool = True):
     cfg = cfg or load_config()
-    key = (split, trip_id, cfg["k_candidates"], cfg["buffer_m"])
+    key = (split, trip_id, cfg["k_candidates"], cfg["buffer_m"], include_labels, append_missing_labels)
     if key not in _FEATURES:
         trip = get_trip(split, trip_id)
         _FEATURES[key] = build_trip_features(
@@ -28,6 +28,8 @@ def get_features(split: str, trip_id: str, cfg: dict | None = None):
             k=int(cfg["k_candidates"]),
             buffer_m=float(cfg["buffer_m"]),
             max_segments=int(cfg["network_prefilter"]["max_segments"]),
+            include_labels=include_labels,
+            append_missing_labels=append_missing_labels,
         )
     return _FEATURES[key]
 
