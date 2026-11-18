@@ -30,7 +30,8 @@ consumed by every model and by the API. Never parse raw `.track/.nodes/.arcs` ou
 
 Rules:
 - Observations whose reference arc could not be mapped get `label_arc = -1`; they are **excluded from training**. Report how many.
-- If the reference arc is not among the k nearest candidates, that row is appended with `cand_rank = k` so every observation has a positive. The **candidate miss rate** is computed *before* appending.
+- Training feature builds may append a missed reference arc with `cand_rank = k` so each mapped training observation has a positive. Always compute candidate miss rate before appending.
+- Prediction candidate generation must be route-blind: call `build_trip_features(..., include_labels=False, append_missing_labels=False)`. Reference labels may be loaded separately after predictions for aggregate scoring; they must not change the candidate set or scores.
 - Coordinates are projected with a local tangent plane (`geo.LocalProjection`), metres. Document this in §2.2.
 
 ## 2. Model bundle (owner: B)
@@ -62,7 +63,7 @@ The `/predict` response (see §4) must contain, per trip:
 
 **Ground truth never leaves the server.** `predicted_route` is arc ids; `predicted_line` is
 display geometry. Metrics are aggregate only — that is allowed by the brief and is what the UI shows.
-The offline `scripts/make_map.py` may draw the reference route for report figures.
+The offline `scripts/make_map.py` may draw the reference route for report figures. Map candidate generation remains route-blind.
 
 ## 4. HTTP contract (owner: C, consumer: D)
 
