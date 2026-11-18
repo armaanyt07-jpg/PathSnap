@@ -69,9 +69,14 @@ The offline `scripts/make_map.py` may draw the reference route for report figure
 
 | endpoint | request | response |
 |---|---|---|
-| `GET /health` | — | `{"status":"ok","model_loaded":true}` |
+| `GET /health` | — | `{"status":"ok","model_loaded":true,"models":["champion", ...],"default_model":"champion"}` |
+| `GET /models` | — | `{"models":["champion","hist_gbdt", ...],"default":"champion"}` |
 | `GET /trips` | — | `{"trips":["00000056", ...]}` (the 10 student-test trips) |
-| `POST /predict` | `{"trip_id":"00000056"}` | object from §3 |
+| `POST /predict` | `{"trip_id":"00000056"}` or `{"trip_id":"00000056","model":"mlp"}` | object from §3 |
+
+`model` is optional and defaults to the promoted bundle (`champion`). The other names are the
+per-family artifacts in `artifacts/candidates/`, loaded on first request; an unknown name returns 404.
+Models are local artifacts, so a fresh clone must retrain before selection is available.
 
 CORS enabled for the UI origin; API listens on `0.0.0.0` so Laptop 2 can reach it.
 

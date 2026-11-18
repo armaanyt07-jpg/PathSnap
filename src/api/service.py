@@ -1,6 +1,9 @@
 """C-owned integration: reference-free inference and server-only scoring."""
 from time import perf_counter
+
+import joblib
 import numpy as np
+
 from hmm import Config, decode
 from pathsnap import baseline, features, labels, metrics, io
 from pathsnap.geo import LocalProjection
@@ -89,11 +92,29 @@ def predict_trip(trip, model, cfg, decoder_config=None):
 
 
 class Service:
-    def __init__(self, model, cfg):
+    """Serves the promoted bundle plus optional per-family comparison models."""
+
+    def __init__(self, model, cfg, extra_models=None):
         self.model, self.cfg = model, cfg
+        self._extra = dict(extra_models or {})
+        self._loaded = {}
+        self.default_name = 'champion'
+
+    def model_names(self):
+        return [self.default_name, *sorted(self._extra)]
+
+    def resolve_model(self, name=None):
+        if not name or name == self.default_name:
+            return self.model
+        if name not in self._extra:
+            raise KeyError(name)
+        if name not in self._loaded:
+            self._loaded[name] = joblib.load(self._extra[name])
+        return self._loaded[name]
 
     def trip_ids(self):
         return io.trip_ids(self.cfg['splits']['student_test'])
 
-    def predict(self, trip_id):
-        return predict_trip(io.load_trip(self.cfg['splits']['student_test'], trip_id), self.model, self.cfg)
+    def predict(self, trip_id, model_name=None):
+        return predict_trip(io.load_trip(self.cfg['splits']['student_test'], trip_id),
+                            self.resolve_model(model_name), self.cfg)

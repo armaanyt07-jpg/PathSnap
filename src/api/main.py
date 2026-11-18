@@ -3,6 +3,8 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
+
 import joblib
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +16,7 @@ from .service import Service
 class PredictRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     trip_id: str = Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_-]+$')
+    model: Optional[str] = Field(default=None, min_length=1, max_length=50, pattern=r'^[A-Za-z0-9_-]+$')
 
 
 def create_app(service=None):
@@ -23,18 +26,31 @@ def create_app(service=None):
         if service is None:
             path = Path(os.getenv('PATHSNAP_MODEL', str(ROOT / 'artifacts/model_bundle.joblib')))
             if path.exists():
-                app.state.service = Service(joblib.load(path), load_config())
+                extras = {}
+                models_dir = Path(os.getenv('PATHSNAP_MODELS_DIR', str(ROOT / 'artifacts/candidates')))
+                if models_dir.is_dir():
+                    extras = {p.stem: p for p in sorted(models_dir.glob('*.joblib'))}
+                app.state.service = Service(joblib.load(path), load_config(), extras)
         yield
 
-    app = FastAPI(title='PathSnap API', version='0.2.0-hmm', lifespan=lifespan)
+    app = FastAPI(title='PathSnap API', version='0.3.0-hmm', lifespan=lifespan)
     app.add_middleware(CORSMiddleware,
         allow_origins=[x.strip() for x in os.getenv('PATHSNAP_CORS', 'http://localhost:8501').split(',') if x.strip()],
         allow_methods=['GET', 'POST'], allow_headers=['Content-Type'])
 
     @app.get('/health')
     def health():
-        loaded = app.state.service is not None
-        return {'status': 'ok' if loaded else 'not_ready', 'model_loaded': loaded}
+        svc = app.state.service
+        loaded = svc is not None
+        names = svc.model_names() if hasattr(svc, 'model_names') else []
+        return {'status': 'ok' if loaded else 'not_ready', 'model_loaded': loaded,
+                'models': names, 'default_model': getattr(svc, 'default_name', None) if loaded else None}
+
+    @app.get('/models')
+    def models():
+        svc = app.state.service
+        names = svc.model_names() if svc is not None and hasattr(svc, 'model_names') else []
+        return {'models': names, 'default': getattr(svc, 'default_name', None) if names else None}
 
     @app.get('/trips')
     def trips():
@@ -54,6 +70,10 @@ def create_app(service=None):
         try:
             if request.trip_id not in svc.trip_ids():
                 raise HTTPException(404, 'Unknown trip_id')
+            if request.model and hasattr(svc, 'model_names'):
+                if request.model not in svc.model_names():
+                    raise HTTPException(404, f'Unknown model: {request.model}')
+                return svc.predict(request.trip_id, request.model)
             return svc.predict(request.trip_id)
         except HTTPException:
             raise
