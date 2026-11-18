@@ -59,8 +59,9 @@ Open `http://localhost:8501` on Laptop 2. Allow inbound TCP 8000 on Laptop 1 for
 ## API contract
 
 - `GET /health` returns service and model status.
+- `GET /models` returns the scoring models the server can use (`champion` plus each saved family).
 - `GET /trips` returns the available trip IDs.
-- `POST /predict` accepts `{"trip_id":"00000056"}` and returns observations, predicted route geometry, aggregate metrics, and timings.
+- `POST /predict` accepts `{"trip_id":"00000056"}` and returns observations, predicted route geometry, aggregate metrics, and timings. Add `"model":"mlp"` to score with a comparison model instead of the champion.
 
 Reference labels and reference geometry stay on the server. For details see [docs/contracts.md](docs/contracts.md).
 
