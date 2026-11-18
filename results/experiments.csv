@@ -1,0 +1,2 @@
+utc,model,neg_frac,cv_top1,cv_macro_f1,test_top1,test_macro_f1,candidate_log_loss,train_seconds,inference_ms
+2026-11-18T07:17:52+00:00,logistic-regression-baseline,1.0,0.6842867904249653,0.7985102806492654,0.7711377870563675,0.7769601554885347,0.31468775181976344,0.8,8.2
