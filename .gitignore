@@ -1,6 +1,8 @@
 # Data & bulky generated artifacts
 data/
 materials/
+artifacts/
+results/_smoke/
 *.zip
 __MACOSX/
 .DS_Store
