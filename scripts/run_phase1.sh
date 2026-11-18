@@ -5,7 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [[ -z "${PATHSNAP_DATA_DIR:-}" ]]; then
-  export PATHSNAP_DATA_DIR="$(cd .. && pwd)/materials/student/Student folder"
+  if [[ -d train && -d student_test ]]; then
+    export PATHSNAP_DATA_DIR="$(pwd)"
+  else
+    export PATHSNAP_DATA_DIR="$(cd .. && pwd)/materials/student/Student folder"
+  fi
 fi
 PY="${PYTHON:-.venv/bin/python}"
 [[ -x "$PY" ]] || PY=python3
