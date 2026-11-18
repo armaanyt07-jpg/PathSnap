@@ -31,7 +31,9 @@ flowchart LR
 - Compare at least five implemented models using group-aware validation.
 - Report each model's actual validation and reserved student-test metrics, timing, and configuration.
 - Explain the selected metrics and class definition. `macro_f1` in this code averages over reference-present arc classes; include candidate-level metrics where relevant.
-- Generate the comparison table and plots from the experiment output files.
+- Generate the comparison table and plots from the experiment output files. The plots are written by
+  `python scripts/make_figures.py` into `results/figures/`; every value is read from
+  `results/model_runs.csv` or recomputed by scoring the saved artifacts on the frozen holdout split.
 
 ## 4. Bayesian hyperparameter search — Member B
 
@@ -64,7 +66,10 @@ flowchart LR
 ## Figure and evidence checklist
 
 - Dataset inventory and feature/label diagnostics.
-- Actual multi-model comparison chart and summary table.
+- Actual multi-model comparison chart and summary table (`results/figures/family_comparison.png`,
+  `accuracy_vs_cost.png`, `per_trip_heatmap.png`; table in `results/model_comparison.md`).
+- Calibration and error diagnostics (`calibration_champion.png`, `score_separation.png`,
+  `candidate_miss_by_trip.png`, `feature_importance.png`).
 - Bayesian search progress and tuned comparison.
 - Classifier-only versus HMM route map or metric comparison.
 - Streamlit screenshot with GPS observations, predicted route, real aggregate metrics, and timings.
