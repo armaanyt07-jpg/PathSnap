@@ -1,0 +1,18 @@
+{
+  "k_candidates": 10,
+  "buffer_m": 300.0,
+  "cv_folds": 5,
+  "seed": 42,
+  "splits": {
+    "train": "train",
+    "student_test": "student_test"
+  },
+  "model": {
+    "C": 1.0,
+    "max_iter": 400,
+    "class_weight": "balanced"
+  },
+  "network_prefilter": {
+    "max_segments": 30000
+  }
+}

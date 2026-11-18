@@ -1,0 +1,23 @@
+# Data & bulky generated artifacts
+data/
+materials/
+*.zip
+__MACOSX/
+.DS_Store
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Local config / secrets
+.env
+.env.*
+*.local.json
+
+# Editor
+.vscode/
+.idea/

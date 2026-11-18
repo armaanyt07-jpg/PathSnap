@@ -1,0 +1,24 @@
+{
+  "student_test": {
+    "trips": 10,
+    "observations": 19160,
+    "observations_per_trip_median": 1420.0,
+    "observations_per_trip_min": 262,
+    "observations_per_trip_max": 3958,
+    "nodes_median": 6596,
+    "arcs_median": 13145,
+    "trips_without_route": 0,
+    "trips_with_missing_files": 0
+  },
+  "train": {
+    "trips": 80,
+    "observations": 208417,
+    "observations_per_trip_median": 1529.0,
+    "observations_per_trip_min": 361,
+    "observations_per_trip_max": 19313,
+    "nodes_median": 9608,
+    "arcs_median": 19526,
+    "trips_without_route": 0,
+    "trips_with_missing_files": 0
+  }
+}
