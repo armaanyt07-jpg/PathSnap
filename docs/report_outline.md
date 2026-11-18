@@ -1,80 +1,80 @@
-# PathSnap final report outline
+# PathSnap final report contributions and evidence plan
 
-Use this outline to assemble the team's single PDF. Authors should fill their sections from implementation details and generated experiment artifacts. Do not transcribe or estimate missing metrics.
+Use the team members' own verified experiments and interpretation to assemble one PDF. The text below documents Member D's integration and metric definitions. Do not copy synthetic decoder outputs into experimental results or insert screenshots until the application has run successfully.
 
-## 1. Overview and system diagram — Member D
+## 1. System overview and architecture — Member D
 
-- Problem statement and project objective.
-- Data-to-prediction workflow and division of responsibilities.
-- State what is implemented in the submitted revision.
+PathSnap turns noisy GPS observations into a sequence of directed road arcs. Member A's parser and feature builder create route-blind candidate arcs and observation features. Member B's trained model assigns a score to each candidate. Member C's HMM/Viterbi decoder selects a connected sequence, handles missing candidates and temporal gaps, and returns segmented route geometry. FastAPI loads the model once, computes aggregate reference metrics on the server, and exposes the prediction contract. Streamlit requests the trip list and prediction from that API, then shows the GPS observations, each predicted route segment, aggregate metrics, and timings.
+
+Reference labels are used only after inference to calculate aggregate scores. They do not enter prediction-time candidate generation, candidate scores, or frontend state. The browser-facing UI keeps an allow-listed subset of prediction response fields and drops per-observation score payloads and unknown fields.
 
 ```mermaid
 flowchart LR
-    A[GPS observations] --> B[Feature and candidate pipeline]
-    C[Road network] --> B
-    B --> D[Model scores]
-    D --> E[Sequence decoder]
-    E --> F[FastAPI prediction response]
-    F --> G[Streamlit map, metrics, timings]
-    H[Reference labels on server] --> I[Aggregate evaluation metrics]
-    I --> F
+    A[GPS observations] --> B[Member A: route-blind candidates and features]
+    N[Directed road network] --> B
+    B --> C[Member B: candidate scores]
+    C --> D[Member C: HMM/Viterbi]
+    D --> E[FastAPI response]
+    R[Reference route on server] --> M[Aggregate metrics after inference]
+    D --> M
+    M --> E
+    E --> U[Member D: Streamlit map, comparison, timings]
 ```
 
-## 2. Data and exploratory analysis — Member A
+## Member D contribution — integration, UI, and reproducibility
 
-- Dataset split, trip and observation counts from the inventory outputs.
-- Feature definitions, local projection, label mapping, monotonicity, and candidate miss-rate audit.
-- Include the actual generated charts and label validation findings.
+- Shared NumPy metrics are used by offline evaluation and the API. Added input validation and safe handling of invalid predicted arc ids in route continuity.
+- The Streamlit client validates `/health` and `/predict`, distinguishes API connectivity from model readiness, reports actionable HTTP/network errors, and supports a configurable API URL for Laptop 2.
+- The map draws GPS observations and every line in `predicted_lines` separately. This preserves HMM route breaks instead of joining segments across gaps. The UI can show a per-trip classifier-argmax versus HMM metric table using the API's aggregate `baseline_metrics` and `metrics`.
+- The model-comparison view reads numeric rows from the actual model `experiments.csv` and Member C's actual `student_test_comparison.json`. Missing or unrecognized data is shown as unavailable; the UI does not calculate or fabricate experiment results.
+- PowerShell and Bash startup scripts resolve the repository root, configure the backend/frontend, validate the dataset layout, and document one-laptop and private-LAN two-laptop runs.
+- Added unit and API contract tests, a cross-platform dataset validator, startup guides, this report contribution, and a real-run screenshot checklist.
 
-## 3. Model comparison — Member B
+## Metrics explanation — Member D
 
-- Compare at least five implemented models using group-aware validation.
-- Report each model's actual validation and reserved student-test metrics, timing, and configuration.
-- Explain the selected metrics and class definition. `macro_f1` in this code averages over reference-present arc classes; include candidate-level metrics where relevant.
-- Generate the comparison table and plots from the experiment output files. The plots are written by
-  `python scripts/make_figures.py` into `results/figures/`; every value is read from
-  `results/model_runs.csv` or recomputed by scoring the saved artifacts on the frozen holdout split.
+- **Top-1 accuracy:** fraction of mapped observations whose chosen arc equals the mapped reference arc. Unmapped reference observations (`label_arc < 0`) are excluded.
+- **Macro F1:** calculate F1 for each unique class present in mapped reference labels, then take the unweighted mean. Predictions for an arc absent from the reference do not add a new macro class; they still fail to match their true class.
+- **Weighted F1:** the same per-class F1 values averaged by the number of reference observations for each class.
+- **Candidate precision, recall, and F1:** binary candidate-row metrics at the fixed score threshold 0.5. They describe candidate scoring, not the final one-arc-per-observation accuracy.
+- **Candidate log loss:** binary log loss across candidate rows, with scores clipped away from zero and one for numerical stability.
+- **Candidate miss rate:** fraction of mapped observations whose reference arc was absent from the route-blind nearest candidates before any training-only positive append. In the API, candidate generation is route-blind and missing positives are not appended.
+- **Route continuity:** fraction of consecutive chosen observation arcs that are the same directed arc or directly connected by an arc. Missing/invalid predictions count as disconnected; inserted HMM bridge arcs are not included in this observation-choice metric.
+- **Timings:** `features_ms`, `model_ms`, `decode_ms`, `inference_ms`, and `total_ms` are measured by the API. Inference includes model scoring and decoding; total includes feature creation and response preparation.
 
-## 4. Bayesian hyperparameter search — Member B
+## Dashboard explanation — Member D
 
-- Search space, objective, trial count, seed, best parameters, and actual tuned-versus-untuned results.
-- Include the saved study/trial output or a reproducible export.
+The Trip reconstruction tab calls `GET /health`, `GET /trips`, and `POST /predict`. It plots observations and decoded route segments in distinct colors, identifies the decoder, and displays aggregate metrics plus feature, model, decoder, inference, and total durations when those fields are present. Missing metric values display as unavailable. A classifier-argmax/HMM table compares their actual per-trip metrics returned by the API.
 
-## 5. HMM/Viterbi decoder — Member C
+The Model comparison tab reads the actual experiment CSV, B-produced model comparison CSV, and/or C-produced per-trip comparison JSON from `results/`. It plots only values present in those files. The Trip reconstruction tab exposes the model choices reported by the API and identifies which model scored the displayed result. A synthetic decoder demonstration is not treated as measured model performance.
 
-- State construction, emissions, transition constraints, handling of gaps/disconnections, and fallback behavior.
-- Compare classifier-only output with HMM/Viterbi on actual evaluation runs.
+## API and deployment — Member C API / Member D UI and setup
 
-## 6. Route visualisation — Member A
+The API provides health and trip-list endpoints plus a validated `POST /predict`. It uses explicit readiness and error responses (404 unknown trip, 422 invalid request, 503 missing model/data, 500 unexpected server failure). `PATHSNAP_MODEL`, `PATHSNAP_DATA_DIR`, and `PATHSNAP_CORS` configure the backend. The API binds to `0.0.0.0` for two-laptop use; expose it only to a trusted private network and restrict firewall port 8000 to the UI laptop. The Streamlit service binds to loopback by default and obtains the remote API address from `PATHSNAP_API_URL`.
 
-- Explain the Folium map layers and the role of the reference route in offline report maps.
-- Include real map figures with a legend and identify the trip used.
+Linux launch commands are in `scripts/run_api.sh`, `scripts/run_ui.sh`, and `scripts/run_all.sh`. Windows PowerShell equivalents are `scripts/setup.ps1`, `scripts/start_backend.ps1`, `scripts/start_frontend.ps1`, and `scripts/start_all.ps1`. Setup, backend, and combined launch validate the train/test directory layout and all four files for each trip; backend startup refuses a student-test split that does not contain ten trips. Windows execution and cross-laptop connectivity must be verified on the actual demo machines before claiming those runs.
 
-## 7. API, UI, and deployment — Members C and D
+## Limitations and reproducibility
 
-- API endpoints and the frozen JSON contract.
-- Streamlit request flow, error handling, metrics, timings, and geospatial display.
-- Two-laptop setup, network configuration, startup commands, and cold-start demonstration evidence.
-- State explicitly that the frontend receives predictions and aggregate metrics, not reference labels or reference geometry.
+- This repository revision has the HMM implementation and actual B model-comparison artifacts, but no trained model bundle. Therefore live `/predict` and Streamlit/API verification have not been performed here.
+- The repository includes actual six-family model comparison tables and plots. Bayesian tuning has not been run, and dataset-backed `results/part_c/student_test_comparison.json` is absent, so the dashboard's HMM comparison view remains unavailable until C supplies that artifact.
+- PowerShell scripts are not Windows-execution-tested in the current environment. Network access to Python package indexes is unavailable here; install `requirements-test.txt` inside the project virtual environment on a machine with package access.
+- The C service currently emits a `metric_definitions.macro_f1` description that says the union of reference and predicted classes, while `pathsnap.metrics.classification_metrics` and the frozen contract average over reference-present classes. The UI filters this metadata and displays the numeric metric from the shared helper. Member C should correct the stale description before the final report/API handoff.
+- C's `results/part_c/VERIFICATION.md` describes synthetic and contract checks only; these are not real-model evaluation results.
 
-## 8. Limitations and reproducibility — all
+## Screenshots checklist
 
-- Known gaps and their effect on conclusions.
-- Data/config/model artifact locations, software versions, seeds, exact run commands, and output files.
-- Separate verified results from planned or unavailable work.
+Capture these only from a successful real run:
 
-## Figure and evidence checklist
+- API `/health` response with model loaded and `/trips` listing the ten reserved trips.
+- Streamlit selector and a completed trip map showing observations and each separate HMM-predicted line segment.
+- Per-trip classifier-argmax versus HMM metric table and real inference timing breakdown.
+- Model-comparison table/chart sourced from actual model or decoder experiment output files.
+- Two-laptop API health check and successful UI prediction from Laptop 2.
+- Optional API-unavailable and missing-model states to show error handling.
 
-- Dataset inventory and feature/label diagnostics.
-- Actual multi-model comparison chart and summary table (`results/figures/family_comparison.png`,
-  `accuracy_vs_cost.png`, `per_trip_heatmap.png`; table in `results/model_comparison.md`).
-- Calibration and error diagnostics (`calibration_champion.png`, `score_separation.png`,
-  `candidate_miss_by_trip.png`, `feature_importance.png`).
-- Bayesian search progress and tuned comparison.
-- Classifier-only versus HMM route map or metric comparison.
-- Streamlit screenshot with GPS observations, predicted route, real aggregate metrics, and timings.
-- Two-laptop API health/trip-list evidence and successful UI request.
+## Team-owned sections still required
 
-## Current checkout evidence status
-
-At the time this outline was added, the repository has inventory CSV/JSON files but no `results/experiments.csv`, trained model bundle, HMM/Viterbi code, Bayesian search outputs, or screenshots. Populate these sections only after the responsible work is delivered and verified.
+- **Member A:** dataset/EDA interpretation and route map figures based on the generated A outputs.
+- **Member B:** Bayesian search and tuned-versus-untuned results remain outstanding; the saved model-comparison artifacts are present in this branch.
+- **Member C:** HMM algorithm explanation, actual baseline/HMM comparisons, and correction of the stale metric definition in API metadata.
+- **Member D:** incorporate verified team sections, run the cold-start two-laptop demo, capture real screenshots, and assemble the final PDF.

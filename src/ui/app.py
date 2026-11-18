@@ -14,14 +14,22 @@ import requests
 import streamlit as st
 from streamlit.components.v1 import html
 
-from pathsnap.comparison import COMPARISON_METRICS, read_experiments
-from pathsnap.ui_contract import public_prediction_payload
+from pathsnap.comparison import (
+    COMPARISON_METRICS,
+    DECODER_METRICS,
+    read_decoder_comparison,
+    read_experiments,
+    read_model_comparison,
+)
+from pathsnap.ui_contract import public_prediction_payload, validate_health_payload
 
 st.set_page_config(page_title="PathSnap", page_icon="🗺️", layout="wide")
 
 PRED_COLOR = "#f07818"
 OBS_COLOR = "#1769aa"
 EXPERIMENTS_PATH = Path(__file__).resolve().parents[2] / "results" / "experiments.csv"
+MODEL_COMPARISON_PATH = Path(__file__).resolve().parents[2] / "results" / "model_comparison.csv"
+DECODER_RESULTS_PATH = Path(__file__).resolve().parents[2] / "results" / "part_c" / "student_test_comparison.json"
 
 MODEL_LABELS = {
     "champion": "champion (promoted bundle)",
@@ -58,10 +66,7 @@ def _format_metric(value, digits: int = 3) -> str:
 def fetch_health(base: str) -> dict:
     response = requests.get(f"{base}/health", timeout=5)
     response.raise_for_status()
-    payload = response.json()
-    if not isinstance(payload, dict) or payload.get("status") != "ok":
-        raise ValueError("API returned an unexpected /health response")
-    return payload
+    return validate_health_payload(response.json())
 
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -102,11 +107,11 @@ with st.sidebar:
     if api_base:
         try:
             health = fetch_health(api_base)
-            st.success("API connected")
-            if not health.get("model_loaded"):
-                st.warning("API is reachable, but no model bundle is loaded.")
-            else:
+            if health["model_loaded"]:
+                st.success("API connected · model loaded")
                 st.caption(f"{len(health.get('models') or [])} scoring models available")
+            else:
+                st.warning("API is reachable and trips can be listed, but no model bundle is loaded; predictions return HTTP 503.")
         except (requests.RequestException, ValueError) as exc:
             st.error(f"API health check failed: {exc}")
 
@@ -123,6 +128,8 @@ except requests.HTTPError as exc:
 except (requests.RequestException, ValueError) as exc:
     st.error(f"Cannot load trips from {api_base}: {exc}")
     st.stop()
+if len(trips) != 10:
+    st.warning(f"Expected 10 reserved trips from the API, received {len(trips)}.")
 
 trip_tab, compare_tab = st.tabs(["Trip reconstruction", "Model comparison"])
 
@@ -156,8 +163,11 @@ with trip_tab:
                 )
                 response.raise_for_status()
                 st.session_state["result"] = {
-                    **public_prediction_payload(response.json()),
-                    "model": model_choice,
+                    "api_base": api_base,
+                    "payload": {
+                        **public_prediction_payload(response.json()),
+                        "model": model_choice,
+                    },
                 }
             except requests.HTTPError as exc:
                 detail = _api_message(exc.response) if exc.response is not None else str(exc)
@@ -169,7 +179,8 @@ with trip_tab:
             except (ValueError, TypeError, KeyError) as exc:
                 st.error(f"The API response did not match the PathSnap contract: {exc}")
 
-    result = st.session_state.get("result")
+    stored_result = st.session_state.get("result")
+    result = stored_result.get("payload") if isinstance(stored_result, dict) and stored_result.get("api_base") == api_base else None
     if result and result["trip_id"] == trip_id:
         if result.get("model") != model_choice:
             st.info(
@@ -187,13 +198,19 @@ with trip_tab:
         cols[4].metric("Inference", f"{_format_metric(timings.get('inference_ms'), 1)} ms")
 
         observations = result["observations"]
-        predicted_line = result["predicted_line"]
+        predicted_lines = result.get("predicted_lines")
+        if not isinstance(predicted_lines, list) or not predicted_lines:
+            predicted_lines = [result["predicted_line"]] if result["predicted_line"] else []
         if not observations:
             st.warning("The API returned no GPS observations for this trip.")
         else:
             try:
                 obs_points = [[float(p[0]), float(p[1])] for p in observations]
-                pred_points = [[float(p[0]), float(p[1])] for p in predicted_line]
+                line_points = [
+                    [[float(p[0]), float(p[1])] for p in line]
+                    for line in predicted_lines
+                    if isinstance(line, list) and line
+                ]
                 center = obs_points[len(obs_points) // 2]
             except (TypeError, ValueError, IndexError) as exc:
                 st.error(f"The API returned invalid map coordinates: {exc}")
@@ -206,10 +223,11 @@ with trip_tab:
                         fill=True, fill_opacity=0.85,
                     ).add_to(observations_layer)
                 observations_layer.add_to(fmap)
-                if pred_points:
+                for segment_index, pred_points in enumerate(line_points, start=1):
                     folium.PolyLine(
                         [[lat, lon] for lon, lat in pred_points],
-                        color=PRED_COLOR, weight=4, tooltip="Predicted route",
+                        color=PRED_COLOR, weight=4,
+                        tooltip=f"Predicted route segment {segment_index}",
                     ).add_to(fmap)
                 folium.LayerControl(collapsed=False).add_to(fmap)
                 html(fmap._repr_html_(), height=620)
@@ -218,22 +236,32 @@ with trip_tab:
         st.caption(
             f"Model: **{_model_label(scored_with) if scored_with else 'served bundle'}** · "
             f"Decoder: **{result['decoder']}** · {result['n_observations']:,} observations · "
-            f"feature build {_format_metric(timings.get('features_ms'), 1)} ms · "
+            f"features {_format_metric(timings.get('features_ms'), 1)} ms · "
+            f"model {_format_metric(timings.get('model_ms'), 1)} ms · "
+            f"decode {_format_metric(timings.get('decode_ms'), 1)} ms · "
             f"total {_format_metric(timings.get('total_ms'), 1)} ms"
         )
+        if result.get("breaks"):
+            st.caption(f"Route contains {len(result['breaks'])} sequence break(s); map segments are shown separately.")
         with st.expander("Additional aggregate metrics"):
             st.json(m)
+        if result.get("decoder_config"):
+            with st.expander("Decoder settings"):
+                st.json(result["decoder_config"])
 
 with compare_tab:
     st.subheader("Experiment results")
-    st.caption("Rows below are read directly from results/experiments.csv; no values are estimated by the UI.")
+    st.caption("Tables and charts use actual experiment artifacts; no values are estimated by the UI.")
     experiments = read_experiments(EXPERIMENTS_PATH)
-    if not experiments:
+    model_comparison = read_model_comparison(MODEL_COMPARISON_PATH)
+    decoder_experiments = read_decoder_comparison(DECODER_RESULTS_PATH)
+    if not experiments and not model_comparison and not decoder_experiments:
         st.info(
-            "No model comparison results are available on this machine yet. Run the experiment scripts "
-            "and place their generated results/experiments.csv here."
+            "No model comparison results are available on this machine yet. Place the generated "
+            "results/experiments.csv and/or results/part_c/student_test_comparison.json here."
         )
-    else:
+    if experiments:
+        st.markdown("**Model experiment CSV**")
         frame = pd.DataFrame(experiments)
         available_metrics = [c for c in COMPARISON_METRICS if frame[c].notna().any()]
         display_columns = ["model", "run", *available_metrics]
@@ -250,3 +278,47 @@ with compare_tab:
             if not chart_data.empty:
                 chart_data = chart_data.assign(experiment=chart_data["model"] + " · " + chart_data["run"])
                 st.bar_chart(chart_data.set_index("experiment")[chart_metric])
+    if model_comparison:
+        st.markdown("**B model-family comparison**")
+        model_frame = pd.DataFrame(model_comparison)
+        available_model_metrics = [
+            metric for metric in COMPARISON_METRICS
+            if model_frame[metric].notna().any()
+        ]
+        st.dataframe(
+            model_frame[["model", *available_model_metrics]],
+            use_container_width=True,
+            hide_index=True,
+        )
+        if available_model_metrics:
+            model_metric = st.selectbox(
+                "Model-family metric",
+                available_model_metrics,
+                format_func=lambda value: value.replace("_", " ").title(),
+            )
+            model_chart_data = model_frame[["model", model_metric]].dropna()
+            if not model_chart_data.empty:
+                st.bar_chart(model_chart_data.set_index("model")[model_metric])
+    if decoder_experiments:
+        st.markdown("**Classifier argmax versus HMM/Viterbi**")
+        decoder_frame = pd.DataFrame(decoder_experiments)
+        available_decoder_metrics = [
+            metric for metric in DECODER_METRICS
+            if decoder_frame[metric].notna().any()
+        ]
+        if available_decoder_metrics:
+            decoder_metric = st.selectbox(
+                "Decoder comparison metric",
+                available_decoder_metrics,
+                format_func=lambda value: value.replace("_", " ").title(),
+            )
+            chart_frame = decoder_frame[["trip_id", "run", "method", decoder_metric]].dropna()
+            st.dataframe(decoder_frame, use_container_width=True, hide_index=True)
+            if not chart_frame.empty:
+                chart_frame = chart_frame.assign(
+                    experiment=chart_frame["trip_id"] + " · run " + chart_frame["run"]
+                )
+                chart = chart_frame.pivot(index="experiment", columns="method", values=decoder_metric)
+                st.bar_chart(chart)
+        else:
+            st.info("The decoder comparison file contains no recognized numeric metrics.")

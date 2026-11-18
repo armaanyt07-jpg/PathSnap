@@ -1,10 +1,8 @@
 """Evaluation metrics shared by experiments and the API (contract §3/§5).
 
-Note on macro F1: arc ids are classes with thousands of levels and very few
-occurrences each, so a plain macro average is unstable and near-zero. We report
-  * macro_f1          - sklearn macro over classes present in y_true
-  * binary_f1         - candidate-level: is the chosen arc the reference arc?
-and state in the report which one drives selection.
+Arc-level macro F1 averages only classes present in mapped reference labels.
+Candidate-level precision, recall, and F1 treat each candidate row as a binary
+reference-arc decision at a score threshold of 0.5.
 """
 from __future__ import annotations
 
@@ -13,17 +11,23 @@ import numpy as np
 
 def _class_f1(y_true: np.ndarray, y_pred: np.ndarray, labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Return per-class F1 and support for the supplied labels."""
-    f1 = np.zeros(len(labels), dtype=float)
-    support = np.zeros(len(labels), dtype=float)
-    for i, label in enumerate(labels):
-        true_for_class = y_true == label
-        pred_for_class = y_pred == label
-        tp = int(np.count_nonzero(true_for_class & pred_for_class))
-        fp = int(np.count_nonzero(~true_for_class & pred_for_class))
-        fn = int(np.count_nonzero(true_for_class & ~pred_for_class))
-        denom = 2 * tp + fp + fn
-        f1[i] = (2 * tp / denom) if denom else 0.0
-        support[i] = np.count_nonzero(true_for_class)
+    true_class_idx = np.searchsorted(labels, y_true)
+    support = np.bincount(true_class_idx, minlength=len(labels)).astype(float)
+
+    true_positive = np.bincount(
+        true_class_idx[y_true == y_pred], minlength=len(labels)
+    ).astype(float)
+    predicted_class_idx = np.searchsorted(labels, y_pred)
+    within_bounds = predicted_class_idx < len(labels)
+    predicted_is_reference_class = np.zeros(len(y_pred), dtype=bool)
+    predicted_is_reference_class[within_bounds] = (
+        labels[predicted_class_idx[within_bounds]] == y_pred[within_bounds]
+    )
+    predicted_count = np.bincount(
+        predicted_class_idx[predicted_is_reference_class], minlength=len(labels)
+    ).astype(float)
+    denom = support + predicted_count
+    f1 = np.divide(2 * true_positive, denom, out=np.zeros_like(support), where=denom > 0)
     return f1, support
 
 
@@ -61,7 +65,17 @@ def candidate_prf(labels: np.ndarray, scores: np.ndarray, threshold: float = 0.5
         raise ValueError("labels and scores must be one-dimensional arrays of equal length")
     if labels.size == 0:
         return {"precision": float("nan"), "recall": float("nan"), "candidate_f1": float("nan")}
-    y = labels.astype(bool)
+    try:
+        scores = scores.astype(float)
+        numeric_labels = labels.astype(float)
+        threshold = float(threshold)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("labels, scores, and threshold must be numeric") from exc
+    if not np.isfinite(scores).all() or not np.isfinite(threshold) or not 0 <= threshold <= 1:
+        raise ValueError("scores and threshold must be finite probabilities in [0, 1]")
+    if not np.isin(numeric_labels, (0.0, 1.0)).all():
+        raise ValueError("candidate labels must contain only 0/1 values")
+    y = numeric_labels.astype(bool)
     p = scores >= threshold
     tp = int(np.count_nonzero(y & p))
     fp = int(np.count_nonzero(~y & p))
@@ -84,8 +98,16 @@ def candidate_log_loss(labels: np.ndarray, scores: np.ndarray) -> float:
         raise ValueError("labels and scores must be one-dimensional arrays of equal length")
     if labels.size == 0:
         return float("nan")
-    p = np.clip(scores.astype(float), 1e-6, 1 - 1e-6)
-    y = labels.astype(float)
+    try:
+        p = scores.astype(float)
+        y = labels.astype(float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("labels and scores must be numeric") from exc
+    if not np.isfinite(p).all() or not np.isfinite(y).all() or not np.isin(y, (0.0, 1.0)).all():
+        raise ValueError("candidate labels and scores must be finite, with labels in {0, 1}")
+    if np.any((p < 0) | (p > 1)):
+        raise ValueError("candidate scores must be probabilities in [0, 1]")
+    p = np.clip(p, 1e-6, 1 - 1e-6)
     return float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
 
 

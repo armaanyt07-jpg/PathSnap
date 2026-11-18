@@ -38,6 +38,20 @@ class ClassificationMetricsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             metrics.candidate_prf(np.array([True]), np.array([0.4, 0.8]))
 
+    def test_candidate_prf_uses_fixed_probability_threshold(self):
+        result = metrics.candidate_prf(
+            np.array([True, False, True, False]), np.array([0.7, 0.9, 0.8, 0.2])
+        )
+        self.assertAlmostEqual(result["precision"], 2 / 3)
+        self.assertEqual(result["recall"], 1.0)
+        self.assertEqual(result["candidate_f1"], 0.8)
+
+    def test_candidate_metrics_reject_nonfinite_or_nonprobability_scores(self):
+        with self.assertRaisesRegex(ValueError, "probabilities"):
+            metrics.candidate_prf(np.array([True]), np.array([np.nan]))
+        with self.assertRaisesRegex(ValueError, "probabilities"):
+            metrics.candidate_log_loss(np.array([True]), np.array([1.1]))
+
 
 class RouteMetricTests(unittest.TestCase):
     def test_continuity_checks_same_or_connected_arcs(self):

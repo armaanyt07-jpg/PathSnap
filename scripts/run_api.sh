@@ -10,4 +10,9 @@ API_HOST="${PATHSNAP_API_HOST:-0.0.0.0}"
 API_PORT="${PATHSNAP_API_PORT:-8000}"
 
 export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+"$PYTHON_BIN" scripts/validate_dataset.py
+MODEL_PATH="${PATHSNAP_MODEL:-$ROOT/artifacts/model_bundle.joblib}"
+if [[ ! -f "$MODEL_PATH" ]]; then
+  echo "warning: no model bundle at $MODEL_PATH; API will report not_ready and /predict will return HTTP 503" >&2
+fi
 exec "$PYTHON_BIN" -m uvicorn api.main:app --host "$API_HOST" --port "$API_PORT"

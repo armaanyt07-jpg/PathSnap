@@ -3,6 +3,7 @@ pandas>=2.1
 scikit-learn>=1.4
 pyarrow>=15.0
 fastapi>=0.110
+pydantic>=2.0
 uvicorn[standard]>=0.29
 streamlit>=1.33
 folium>=0.16

@@ -65,11 +65,17 @@ The `/predict` response (see §4) must contain, per trip:
 display geometry. Metrics are aggregate only — that is allowed by the brief and is what the UI shows.
 The offline `scripts/make_map.py` may draw the reference route for report figures. Map candidate generation remains route-blind.
 
+The HMM service may add these backward-compatible fields: `baseline_route`, `baseline_metrics`,
+`route_segments`, `predicted_lines`, `breaks`, `decoder_config`, and `timings.model_ms` / `timings.decode_ms`.
+Clients must use `predicted_lines` when present so separate decoder segments are not joined across
+breaks. The optional per-observation `predictions` field contains no reference labels and is dropped
+by the Streamlit allow-list. Missing metrics are unavailable, not zero.
+
 ## 4. HTTP contract (owner: C, consumer: D)
 
 | endpoint | request | response |
 |---|---|---|
-| `GET /health` | — | `{"status":"ok","model_loaded":true,"models":["champion", ...],"default_model":"champion"}` |
+| `GET /health` | — | readiness, `model_loaded`, and available models/default when loaded |
 | `GET /models` | — | `{"models":["champion","hist_gbdt", ...],"default":"champion"}` |
 | `GET /trips` | — | `{"trips":["00000056", ...]}` (the 10 student-test trips) |
 | `POST /predict` | `{"trip_id":"00000056"}` or `{"trip_id":"00000056","model":"mlp"}` | object from §3 |
@@ -78,13 +84,17 @@ The offline `scripts/make_map.py` may draw the reference route for report figure
 per-family artifacts in `artifacts/candidates/`, loaded on first request; an unknown name returns 404.
 Models are local artifacts, so a fresh clone must retrain before selection is available.
 
-CORS enabled for the UI origin; API listens on `0.0.0.0` so Laptop 2 can reach it.
+CORS is restricted to origins in `PATHSNAP_CORS` (default `http://localhost:8501`); the API listens
+on `0.0.0.0` for two-laptop LAN use. Keep the unauthenticated API on a trusted private network and
+restrict its firewall port to the UI laptop. Unknown trips return 404, invalid request bodies return
+422, missing model/data returns 503, and unexpected failures return a generic 500 while details are
+logged server-side.
 
 ## 5. Decisions to justify in the report
 
-- **Macro F1 with thousands of arc-id classes** is near-zero and unstable. We report
-  `macro_f1` over classes present in the reference labels **and** candidate-level binary F1,
-  and state which one drives model selection.
+- **Macro F1 with thousands of arc-id classes** is near-zero and unstable. This repository's
+  `macro_f1` averages over classes present in mapped reference labels. Candidate precision, recall,
+  and F1 use binary candidate labels at threshold 0.5; they are not chosen-arc accuracy.
 - **Direction:** arcs are directed. A reversed traversal shows `heading_diff_deg ≈ 180`; if the
   road network is bidirectional this feature must not be read as "wrong side".
 - **Duplicated arc ids** in `.route` are normal; `route_pos` uses the first occurrence.

@@ -1,77 +1,89 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 try:
-    import numpy as np
-    import pandas as pd
-    from api import main as api
-except ImportError as exc:  # The source-only test environment may not have app dependencies installed.
-    api = None
-    np = None
-    pd = None
+    from fastapi.testclient import TestClient
+    from api.main import create_app
+except ImportError as exc:
+    TestClient = None
+    create_app = None
     API_IMPORT_ERROR = str(exc)
 else:
     API_IMPORT_ERROR = ""
 
 
-@unittest.skipIf(api is None, f"FastAPI runtime dependencies unavailable: {API_IMPORT_ERROR}")
+@unittest.skipIf(create_app is None, f"FastAPI runtime dependencies unavailable: {API_IMPORT_ERROR}")
 class APIContractTests(unittest.TestCase):
-    def test_trips_endpoint_returns_contract_object(self):
-        trip_ids = [f"{i:08d}" for i in range(10)]
-        with patch.object(api.psio, "trip_ids", return_value=trip_ids):
-            self.assertEqual(api.trips(), {"trips": trip_ids})
+    def setUp(self):
+        class StubService:
+            def trip_ids(self):
+                return [
+                    "00000000", "00000007", "00000009", "00000040", "00000052",
+                    "00000056", "00000065", "00000076", "00000077", "00000091",
+                ]
 
-    def test_prediction_response_is_public_and_contract_shaped(self):
-        features = pd.DataFrame(
-            {
-                "trip_id": ["00000056", "00000056"],
-                "obs_idx": [0, 1],
-                "arc_id": [1, 2],
-                "label_arc": [1, 2],
-                "label": [True, True],
-            }
-        )
-        chosen = pd.DataFrame({"arc_id": [1, 2], "label_arc": [1, 2]})
-        trip = {
-            "track": pd.DataFrame({"lon": [-122.0, -121.9], "lat": [37.0, 37.1]}),
-            "nodes": np.array([[-122.0, 37.0], [-121.9, 37.1]]),
-            "arcs": np.array([[0, 1], [1, 0]]),
+            def predict(self, trip_id):
+                return {
+                    "trip_id": trip_id,
+                    "decoder": "hmm-viterbi",
+                    "n_observations": 2,
+                    "observations": [[1.0, 2.0], [3.0, 4.0]],
+                    "predicted_route": [4, 5],
+                    "predicted_line": [[1.0, 2.0], [3.0, 4.0]],
+                    "predicted_lines": [[[1.0, 2.0], [3.0, 4.0]]],
+                    "baseline_metrics": {"top1_accuracy": 0.6},
+                    "metrics": {"top1_accuracy": 0.75, "route_continuity": 1.0},
+                    "timings": {"features_ms": 2.0, "decode_ms": 8.5, "total_ms": 11.0},
+                }
+
+        self.client = TestClient(create_app(StubService()))
+        self.client.__enter__()
+
+    def tearDown(self):
+        self.client.__exit__(None, None, None)
+
+    def test_health_and_all_ten_trip_ids(self):
+        health = self.client.get("/health")
+        self.assertEqual(health.status_code, 200)
+        self.assertTrue(health.json()["model_loaded"])
+        trips = self.client.get("/trips").json()["trips"]
+        self.assertEqual(len(trips), 10)
+
+    def test_prediction_matches_contract_without_reference_fields(self):
+        response = self.client.post("/predict", json={"trip_id": "00000056"})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        required = {
+            "trip_id", "decoder", "n_observations", "observations", "predicted_route",
+            "predicted_line", "metrics", "timings",
         }
-        diag = {"candidate_miss_rate": 0.0}
-
-        with (
-            patch.object(api, "get_model", return_value=object()),
-            patch.object(api.pipeline, "get_features", return_value=(features, diag)),
-            patch.object(api.pipeline, "get_trip", return_value=trip),
-            patch.object(api.baseline, "predict_scores", return_value=np.array([0.9, 0.8])),
-            patch.object(api.baseline, "choose_one_per_observation", return_value=chosen),
-            patch.object(api.pipeline, "line_from_arcs", return_value=np.array([[-122.0, 37.0], [-121.9, 37.1]])),
-        ):
-            payload = api.predict(api.PredictRequest(trip_id="00000056"))
-
-        self.assertEqual(
-            set(payload),
-            {"trip_id", "decoder", "n_observations", "observations", "predicted_route", "predicted_line", "metrics", "timings"},
-        )
-        self.assertEqual(payload["trip_id"], "00000056")
-        self.assertEqual(payload["predicted_route"], [1, 2])
-        self.assertEqual(payload["n_observations"], 2)
-        self.assertTrue({"top1_accuracy", "macro_f1", "candidate_miss_rate", "route_continuity"} <= payload["metrics"].keys())
-        self.assertTrue({"features_ms", "inference_ms", "total_ms"} <= payload["timings"].keys())
+        self.assertTrue(required <= payload.keys())
+        self.assertEqual(payload["decoder"], "hmm-viterbi")
+        self.assertIn("predicted_lines", payload)
+        self.assertIn("baseline_metrics", payload)
+        self.assertIn("decode_ms", payload["timings"])
         self.assertFalse({"label_arc", "reference_route", "reference_line", "route"} & payload.keys())
 
-    def test_prediction_unknown_trip_maps_to_404(self):
-        from fastapi import HTTPException
+    def test_invalid_and_unknown_requests_have_contract_errors(self):
+        self.assertEqual(self.client.post("/predict", json={"trip_id": "unknown"}).status_code, 404)
+        self.assertEqual(self.client.post("/predict", json={"trip_id": "../secret"}).status_code, 422)
+        self.assertEqual(self.client.post("/predict", json={"trip_id": "00000056", "labels": [1]}).status_code, 422)
 
-        with (
-            patch.object(api, "get_model", return_value=object()),
-            patch.object(api.pipeline, "get_features", side_effect=FileNotFoundError),
-        ):
-            with self.assertRaises(HTTPException) as raised:
-                api.predict(api.PredictRequest(trip_id="unknown"))
-        self.assertEqual(raised.exception.status_code, 404)
+    def test_missing_model_is_reported_as_not_ready(self):
+        app = create_app()
+        with tempfile.TemporaryDirectory() as directory:
+            missing_model = Path(directory) / "missing.joblib"
+            with patch.dict(os.environ, {"PATHSNAP_MODEL": str(missing_model)}):
+                with TestClient(app) as client:
+                    health = client.get("/health").json()
+                    self.assertEqual(health["status"], "not_ready")
+                    self.assertFalse(health["model_loaded"])
+                    self.assertEqual(client.post("/predict", json={"trip_id": "00000056"}).status_code, 503)
 
 
 if __name__ == "__main__":
